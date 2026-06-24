@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg[binary]
+alembic
+yfinance
+pydantic
+pydantic-settings
+httpx
+python-dotenv
+apscheduler
