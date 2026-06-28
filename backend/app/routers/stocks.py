@@ -1,3 +1,5 @@
+import datetime as dt
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -6,6 +8,11 @@ from app.models.stock import Stock
 from app.schemas import StockOut, ScreenerCriteria
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
+
+
+def start_of_week(d: dt.date) -> dt.date:
+    """Monday of the calendar week containing d (IST calendar week)."""
+    return d - dt.timedelta(days=d.weekday())
 
 
 @router.get("", response_model=list[StockOut])
@@ -31,6 +38,8 @@ def screen_stocks(criteria: ScreenerCriteria, db: Session = Depends(get_db)):
         query = query.filter(Stock.current_price >= criteria.min_price)
     if criteria.max_price is not None:
         query = query.filter(Stock.current_price <= criteria.max_price)
+    if criteria.new_all_time_high_this_week:
+        query = query.filter(Stock.all_time_high_date >= start_of_week(dt.date.today()))
 
     results = query.all()
 

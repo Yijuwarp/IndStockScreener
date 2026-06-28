@@ -28,4 +28,5 @@ export interface ScreenerCriteria {
   max_price?: number;
   pct_from_all_time_high_max?: number;
   pct_from_52_week_high_max?: number;
+  new_all_time_high_this_week?: boolean;
 }

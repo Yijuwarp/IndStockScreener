@@ -32,3 +32,4 @@ class ScreenerCriteria(BaseModel):
     max_price: Optional[float] = None
     pct_from_all_time_high_max: Optional[float] = None  # e.g. 5 = within 5% of ATH
     pct_from_52_week_high_max: Optional[float] = None
+    new_all_time_high_this_week: Optional[bool] = None

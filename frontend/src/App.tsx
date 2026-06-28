@@ -4,7 +4,7 @@ import { getStatus, screenStocks } from "./api";
 import "./App.css";
 
 function App() {
-  const [criteria, setCriteria] = useState<ScreenerCriteria>({});
+  const [criteria, setCriteria] = useState<ScreenerCriteria>({ new_all_time_high_this_week: true });
   const [results, setResults] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -17,6 +17,23 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
+  const runScreen = async (c: ScreenerCriteria) => {
+    setLoading(true);
+    setError(null);
+    try {
+      setResults(await screenStocks(c));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    runScreen(criteria);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleChange = (key: keyof ScreenerCriteria, value: string) => {
     setCriteria((prev) => ({
       ...prev,
@@ -24,17 +41,13 @@ function App() {
     }));
   };
 
+  const handleToggle = (key: keyof ScreenerCriteria, checked: boolean) => {
+    setCriteria((prev) => ({ ...prev, [key]: checked }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    setError(null);
-    try {
-      setResults(await screenStocks(criteria));
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoading(false);
-    }
+    runScreen(criteria);
   };
 
   return (
@@ -47,6 +60,14 @@ function App() {
         </p>
       )}
       <form onSubmit={handleSubmit} className="criteria-form">
+        <label>
+          <input
+            type="checkbox"
+            checked={criteria.new_all_time_high_this_week ?? false}
+            onChange={(e) => handleToggle("new_all_time_high_this_week", e.target.checked)}
+          />
+          New All-Time High this week
+        </label>
         <label>
           Exchange
           <select onChange={(e) => handleChange("exchange", e.target.value)}>
