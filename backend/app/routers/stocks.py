@@ -102,6 +102,8 @@ def screen_stocks(criteria: ScreenerCriteria, db: Session = Depends(get_db)):
         query = query.filter(Stock.current_price <= criteria.max_price)
     if criteria.new_all_time_high_this_week:
         query = query.filter(Stock.all_time_high_date >= start_of_week(dt.date.today()))
+    if criteria.new_52_week_high_this_week:
+        query = query.filter(Stock.week_52_high_date >= start_of_week(dt.date.today()))
     if criteria.min_avg_weekly_volume is not None:
         query = query.filter(Stock.avg_weekly_volume >= criteria.min_avg_weekly_volume)
     if criteria.cap_category:
@@ -123,7 +125,7 @@ def screen_stocks(criteria: ScreenerCriteria, db: Session = Depends(get_db)):
         ]
 
     results = attach_weekly_fields(db, results)
-    results = attach_breakout_fields(db, results)
+    results = attach_breakout_fields(db, results, basis=criteria.basis)
 
     if criteria.min_consolidation_weeks is not None:
         results = [

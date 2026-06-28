@@ -4,7 +4,7 @@ import { getStatus, screenStocks } from "./api";
 import "./App.css";
 
 function App() {
-  const [criteria, setCriteria] = useState<ScreenerCriteria>({ new_all_time_high_this_week: true });
+  const [criteria, setCriteria] = useState<ScreenerCriteria>({ basis: "ATH", new_all_time_high_this_week: true });
   const [results, setResults] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +52,15 @@ function App() {
     runScreen(criteria);
   };
 
+  const handleBasisChange = (basis: "ATH" | "52W") => {
+    setCriteria((prev) => ({
+      ...prev,
+      basis,
+      new_all_time_high_this_week: basis === "ATH" ? true : undefined,
+      new_52_week_high_this_week: basis === "52W" ? true : undefined,
+    }));
+  };
+
   return (
     <div className="screener">
       <h1>IndStockScreener</h1>
@@ -63,13 +72,32 @@ function App() {
       )}
       <form onSubmit={handleSubmit} className="criteria-form">
         <label>
-          <input
-            type="checkbox"
-            checked={criteria.new_all_time_high_this_week ?? false}
-            onChange={(e) => handleToggle("new_all_time_high_this_week", e.target.checked)}
-          />
-          New All-Time High this week
+          Basis
+          <select value={criteria.basis ?? "ATH"} onChange={(e) => handleBasisChange(e.target.value as "ATH" | "52W")}>
+            <option value="ATH">All-Time High</option>
+            <option value="52W">52-Week High</option>
+          </select>
         </label>
+        {criteria.basis !== "52W" && (
+          <label>
+            <input
+              type="checkbox"
+              checked={criteria.new_all_time_high_this_week ?? false}
+              onChange={(e) => handleToggle("new_all_time_high_this_week", e.target.checked)}
+            />
+            New All-Time High this week
+          </label>
+        )}
+        {criteria.basis === "52W" && (
+          <label>
+            <input
+              type="checkbox"
+              checked={criteria.new_52_week_high_this_week ?? false}
+              onChange={(e) => handleToggle("new_52_week_high_this_week", e.target.checked)}
+            />
+            New 52-Week High this week
+          </label>
+        )}
         <label>
           Exchange
           <select onChange={(e) => handleChange("exchange", e.target.value)}>

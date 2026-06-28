@@ -42,6 +42,8 @@ export interface ScreenerCriteria {
   pct_from_all_time_high_max?: number;
   pct_from_52_week_high_max?: number;
   new_all_time_high_this_week?: boolean;
+  new_52_week_high_this_week?: boolean;
+  basis?: "ATH" | "52W";
   min_consolidation_weeks?: number;
   max_consolidation_range_pct?: number;
   max_extension_pct?: number;

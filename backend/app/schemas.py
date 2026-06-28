@@ -46,6 +46,8 @@ class ScreenerCriteria(BaseModel):
     pct_from_all_time_high_max: Optional[float] = None  # e.g. 5 = within 5% of ATH
     pct_from_52_week_high_max: Optional[float] = None
     new_all_time_high_this_week: Optional[bool] = None
+    new_52_week_high_this_week: Optional[bool] = None
+    basis: str = "ATH"  # "ATH" or "52W" -- which BreakoutMetrics row to attach
     min_consolidation_weeks: Optional[int] = None
     max_consolidation_range_pct: Optional[float] = None
     max_extension_pct: Optional[float] = None
