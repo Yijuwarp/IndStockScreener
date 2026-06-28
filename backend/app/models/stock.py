@@ -49,3 +49,24 @@ class DailyPrice(Base):
         UniqueConstraint("stock_id", "date", name="uq_stock_date"),
         Index("ix_daily_prices_stock_date", "stock_id", "date"),
     )
+
+
+class WeeklyPrice(Base):
+    """Precomputed weekly bars (Monday-anchored, IST calendar week), derived from daily_prices."""
+    __tablename__ = "weekly_prices"
+
+    id = Column(Integer, primary_key=True)
+    stock_id = Column(Integer, ForeignKey("stocks.id"), nullable=False)
+    week_start = Column(Date, nullable=False)  # Monday of the ISO week
+    open = Column(Float, nullable=True)
+    high = Column(Float, nullable=True)
+    low = Column(Float, nullable=True)
+    close = Column(Float, nullable=True)
+    volume = Column(BigInteger, nullable=True)
+
+    stock = relationship("Stock")
+
+    __table_args__ = (
+        UniqueConstraint("stock_id", "week_start", name="uq_stock_week"),
+        Index("ix_weekly_prices_stock_week", "stock_id", "week_start"),
+    )

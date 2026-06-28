@@ -121,6 +121,9 @@ function App() {
             <th>Market Cap</th>
             <th>All-Time High</th>
             <th>52-Week High</th>
+            <th>Weekly Close</th>
+            <th>Weekly Volume</th>
+            <th>Weekly % Change</th>
           </tr>
         </thead>
         <tbody>
@@ -134,6 +137,9 @@ function App() {
               <td>{s.market_cap}</td>
               <td>{s.all_time_high}</td>
               <td>{s.week_52_high}</td>
+              <td>{s.weekly_close}</td>
+              <td>{s.weekly_volume}</td>
+              <td>{s.weekly_pct_change?.toFixed(2)}</td>
             </tr>
           ))}
         </tbody>

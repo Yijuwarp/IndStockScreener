@@ -11,6 +11,9 @@ export interface Stock {
   week_52_high: number | null;
   week_52_high_date: string | null;
   last_updated: string | null;
+  weekly_close: number | null;
+  weekly_volume: number | null;
+  weekly_pct_change: number | null;
 }
 
 export interface RefreshStatus {

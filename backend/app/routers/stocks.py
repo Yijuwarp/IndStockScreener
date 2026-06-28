@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models.stock import Stock
+from app.models.stock import Stock, WeeklyPrice
 from app.schemas import StockOut, ScreenerCriteria
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
@@ -15,9 +15,43 @@ def start_of_week(d: dt.date) -> dt.date:
     return d - dt.timedelta(days=d.weekday())
 
 
+def attach_weekly_fields(db: Session, stocks: list[Stock]) -> list[Stock]:
+    """Attach weekly_close / weekly_volume / weekly_pct_change from the two most
+    recent WeeklyPrice rows per stock."""
+    stock_ids = [s.id for s in stocks]
+    if not stock_ids:
+        return stocks
+
+    rows = (
+        db.query(WeeklyPrice)
+        .filter(WeeklyPrice.stock_id.in_(stock_ids))
+        .order_by(WeeklyPrice.stock_id, WeeklyPrice.week_start.desc())
+        .all()
+    )
+
+    latest_two: dict[int, list[WeeklyPrice]] = {}
+    for row in rows:
+        bucket = latest_two.setdefault(row.stock_id, [])
+        if len(bucket) < 2:
+            bucket.append(row)
+
+    for stock in stocks:
+        bucket = latest_two.get(stock.id, [])
+        stock.weekly_close = None
+        stock.weekly_volume = None
+        stock.weekly_pct_change = None
+        if len(bucket) >= 1:
+            stock.weekly_close = bucket[0].close
+            stock.weekly_volume = bucket[0].volume
+        if len(bucket) >= 2 and bucket[1].close:
+            stock.weekly_pct_change = (bucket[0].close - bucket[1].close) / bucket[1].close * 100
+
+    return stocks
+
+
 @router.get("", response_model=list[StockOut])
 def list_stocks(db: Session = Depends(get_db)):
-    return db.query(Stock).all()
+    return attach_weekly_fields(db, db.query(Stock).all())
 
 
 @router.post("/screen", response_model=list[StockOut])
@@ -56,4 +90,4 @@ def screen_stocks(criteria: ScreenerCriteria, db: Session = Depends(get_db)):
             and (s.week_52_high - s.current_price) / s.week_52_high * 100 <= criteria.pct_from_52_week_high_max
         ]
 
-    return results
+    return attach_weekly_fields(db, results)

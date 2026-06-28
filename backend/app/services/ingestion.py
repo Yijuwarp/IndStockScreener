@@ -1,9 +1,40 @@
 import datetime as dt
 
+import pandas as pd
 import yfinance as yf
 from sqlalchemy.orm import Session
 
-from app.models.stock import Stock, DailyPrice
+from app.models.stock import Stock, DailyPrice, WeeklyPrice
+
+
+def _upsert_weekly_prices(db: Session, stock: Stock, hist: pd.DataFrame) -> None:
+    """Aggregate daily history into Monday-anchored weekly bars."""
+    df = hist.copy()
+    df["week_start"] = df.index.to_series().apply(lambda d: (d - dt.timedelta(days=d.weekday())).date())
+
+    weekly = df.groupby("week_start").agg(
+        open=("Open", "first"),
+        high=("High", "max"),
+        low=("Low", "min"),
+        close=("Close", "last"),
+        volume=("Volume", "sum"),
+    )
+
+    existing = {
+        wp.week_start: wp
+        for wp in db.query(WeeklyPrice).filter(WeeklyPrice.stock_id == stock.id).all()
+    }
+
+    for week_start, row in weekly.iterrows():
+        wp = existing.get(week_start)
+        if wp is None:
+            wp = WeeklyPrice(stock_id=stock.id, week_start=week_start)
+            db.add(wp)
+        wp.open = float(row["open"])
+        wp.high = float(row["high"])
+        wp.low = float(row["low"])
+        wp.close = float(row["close"])
+        wp.volume = int(row["volume"])
 
 
 def upsert_stock_history(db: Session, stock: Stock) -> None:
@@ -32,6 +63,8 @@ def upsert_stock_history(db: Session, stock: Stock) -> None:
                 volume=row.get("Volume"),
             )
         )
+
+    _upsert_weekly_prices(db, stock, hist)
 
     db.flush()
 

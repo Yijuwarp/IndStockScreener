@@ -17,6 +17,9 @@ class StockOut(BaseModel):
     week_52_high: Optional[float]
     week_52_high_date: Optional[dt.date]
     last_updated: Optional[dt.date]
+    weekly_close: Optional[float] = None
+    weekly_volume: Optional[int] = None
+    weekly_pct_change: Optional[float] = None
 
     class Config:
         from_attributes = True
