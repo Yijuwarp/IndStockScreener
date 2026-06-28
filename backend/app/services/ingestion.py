@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from app.models.stock import Stock, DailyPrice, WeeklyPrice, BreakoutMetrics
 from app.services.breakout import detect_breakouts
 
+AVG_VOLUME_WEEKS = 12
+
 
 def _upsert_weekly_prices(db: Session, stock: Stock, hist: pd.DataFrame) -> None:
     """Aggregate daily history into Monday-anchored weekly bars."""
@@ -38,6 +40,12 @@ def _upsert_weekly_prices(db: Session, stock: Stock, hist: pd.DataFrame) -> None
         wp.volume = int(row["volume"])
 
 
+def _update_avg_weekly_volume(stock: Stock, weekly_rows: list[WeeklyPrice]) -> None:
+    """Trailing 12-week average volume, a liquidity floor independent of basis/breakout."""
+    recent = [wp.volume for wp in weekly_rows[-AVG_VOLUME_WEEKS:] if wp.volume is not None]
+    stock.avg_weekly_volume = int(sum(recent) / len(recent)) if recent else None
+
+
 def _upsert_breakout_metrics(db: Session, stock: Stock) -> None:
     """Recompute ATH-basis breakout metrics from this stock's weekly bars."""
     weekly_rows = (
@@ -48,6 +56,9 @@ def _upsert_breakout_metrics(db: Session, stock: Stock) -> None:
     )
     weekly_bars = [(wp.week_start, wp.high) for wp in weekly_rows if wp.high is not None]
     by_week = {wp.week_start: wp for wp in weekly_rows}
+    by_index = {wp.week_start: i for i, wp in enumerate(weekly_rows)}
+
+    _update_avg_weekly_volume(stock, weekly_rows)
 
     events = detect_breakouts(weekly_bars)
 
@@ -86,6 +97,16 @@ def _upsert_breakout_metrics(db: Session, stock: Stock) -> None:
         today = dt.date.today()
         current_week_start = today - dt.timedelta(days=today.weekday())
         bm.breakout_age_weeks = (current_week_start - latest.week_start).days // 7
+
+        breakout_idx = by_index[latest.week_start]
+        prior_window = weekly_rows[max(0, breakout_idx - AVG_VOLUME_WEEKS):breakout_idx]
+        prior_volumes = [wp.volume for wp in prior_window if wp.volume is not None]
+        breakout_volume = by_week[latest.week_start].volume
+        if prior_volumes and breakout_volume is not None:
+            avg_prior_volume = sum(prior_volumes) / len(prior_volumes)
+            bm.breakout_volume_ratio = breakout_volume / avg_prior_volume if avg_prior_volume else None
+        else:
+            bm.breakout_volume_ratio = None
     else:
         bm.breakout_week = None
         bm.breakout_level = None
@@ -93,6 +114,7 @@ def _upsert_breakout_metrics(db: Session, stock: Stock) -> None:
         bm.consolidation_range_pct = None
         bm.extension_pct = None
         bm.breakout_age_weeks = None
+        bm.breakout_volume_ratio = None
 
 
 def upsert_stock_history(db: Session, stock: Stock) -> None:

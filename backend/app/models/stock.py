@@ -23,6 +23,7 @@ class Stock(Base):
     week_52_high = Column(Float, nullable=True)
     week_52_high_date = Column(Date, nullable=True)
     last_updated = Column(Date, nullable=True)
+    avg_weekly_volume = Column(BigInteger, nullable=True)  # trailing 12-week average, liquidity floor
 
     prices = relationship("DailyPrice", back_populates="stock", cascade="all, delete-orphan")
 
@@ -90,6 +91,7 @@ class BreakoutMetrics(Base):
     consolidation_range_pct = Column(Float, nullable=True)  # (max high - min low) / breakout_level over that base
     extension_pct = Column(Float, nullable=True)  # current_price vs breakout_level, how far price has run since
     breakout_age_weeks = Column(Integer, nullable=True)  # weeks since breakout_week
+    breakout_volume_ratio = Column(Float, nullable=True)  # breakout week volume / trailing 12-wk avg before it
 
     stock = relationship("Stock")
 

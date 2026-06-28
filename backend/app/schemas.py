@@ -27,6 +27,8 @@ class StockOut(BaseModel):
     consolidation_range_pct: Optional[float] = None
     extension_pct: Optional[float] = None
     breakout_age_weeks: Optional[int] = None
+    avg_weekly_volume: Optional[int] = None
+    breakout_volume_ratio: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -47,3 +49,5 @@ class ScreenerCriteria(BaseModel):
     max_consolidation_range_pct: Optional[float] = None
     max_extension_pct: Optional[float] = None
     max_breakout_age_weeks: Optional[int] = None
+    min_avg_weekly_volume: Optional[int] = None
+    min_breakout_volume_ratio: Optional[float] = None

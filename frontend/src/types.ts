@@ -21,6 +21,8 @@ export interface Stock {
   consolidation_range_pct: number | null;
   extension_pct: number | null;
   breakout_age_weeks: number | null;
+  avg_weekly_volume: number | null;
+  breakout_volume_ratio: number | null;
 }
 
 export interface RefreshStatus {
@@ -43,4 +45,6 @@ export interface ScreenerCriteria {
   max_consolidation_range_pct?: number;
   max_extension_pct?: number;
   max_breakout_age_weeks?: number;
+  min_avg_weekly_volume?: number;
+  min_breakout_volume_ratio?: number;
 }

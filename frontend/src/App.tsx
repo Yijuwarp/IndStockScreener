@@ -111,6 +111,14 @@ function App() {
           Max Breakout Age (weeks)
           <input type="number" onChange={(e) => handleChange("max_breakout_age_weeks", e.target.value)} />
         </label>
+        <label>
+          Min Avg Weekly Volume
+          <input type="number" onChange={(e) => handleChange("min_avg_weekly_volume", e.target.value)} />
+        </label>
+        <label>
+          Min Breakout Volume Ratio
+          <input type="number" onChange={(e) => handleChange("min_breakout_volume_ratio", e.target.value)} />
+        </label>
         <button type="submit" disabled={loading}>
           {loading ? "Screening..." : "Screen Stocks"}
         </button>
@@ -154,6 +162,8 @@ function App() {
             <th>Consolidation Range %</th>
             <th>Extension %</th>
             <th>Breakout Age (weeks)</th>
+            <th>Avg Weekly Volume</th>
+            <th>Breakout Volume Ratio</th>
           </tr>
         </thead>
         <tbody>
@@ -177,6 +187,8 @@ function App() {
               <td>{s.consolidation_range_pct?.toFixed(2)}</td>
               <td>{s.extension_pct?.toFixed(2)}</td>
               <td>{s.breakout_age_weeks}</td>
+              <td>{s.avg_weekly_volume}</td>
+              <td>{s.breakout_volume_ratio?.toFixed(2)}</td>
             </tr>
           ))}
         </tbody>

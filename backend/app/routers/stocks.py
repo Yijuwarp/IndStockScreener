@@ -71,6 +71,7 @@ def attach_breakout_fields(db: Session, stocks: list[Stock], basis: str = "ATH")
         stock.consolidation_range_pct = bm.consolidation_range_pct if bm else None
         stock.extension_pct = bm.extension_pct if bm else None
         stock.breakout_age_weeks = bm.breakout_age_weeks if bm else None
+        stock.breakout_volume_ratio = bm.breakout_volume_ratio if bm else None
 
     return stocks
 
@@ -101,6 +102,8 @@ def screen_stocks(criteria: ScreenerCriteria, db: Session = Depends(get_db)):
         query = query.filter(Stock.current_price <= criteria.max_price)
     if criteria.new_all_time_high_this_week:
         query = query.filter(Stock.all_time_high_date >= start_of_week(dt.date.today()))
+    if criteria.min_avg_weekly_volume is not None:
+        query = query.filter(Stock.avg_weekly_volume >= criteria.min_avg_weekly_volume)
 
     results = query.all()
 
@@ -139,6 +142,11 @@ def screen_stocks(criteria: ScreenerCriteria, db: Session = Depends(get_db)):
         results = [
             s for s in results
             if s.breakout_age_weeks is not None and s.breakout_age_weeks <= criteria.max_breakout_age_weeks
+        ]
+    if criteria.min_breakout_volume_ratio is not None:
+        results = [
+            s for s in results
+            if s.breakout_volume_ratio is not None and s.breakout_volume_ratio >= criteria.min_breakout_volume_ratio
         ]
 
     return results
