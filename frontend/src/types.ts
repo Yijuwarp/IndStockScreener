@@ -17,6 +17,8 @@ export interface Stock {
   breakout_count: number | null;
   breakout_week: string | null;
   breakout_level: number | null;
+  consolidation_weeks: number | null;
+  consolidation_range_pct: number | null;
 }
 
 export interface RefreshStatus {
@@ -35,4 +37,6 @@ export interface ScreenerCriteria {
   pct_from_all_time_high_max?: number;
   pct_from_52_week_high_max?: number;
   new_all_time_high_this_week?: boolean;
+  min_consolidation_weeks?: number;
+  max_consolidation_range_pct?: number;
 }

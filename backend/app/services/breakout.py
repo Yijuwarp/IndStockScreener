@@ -15,6 +15,7 @@ PULLBACK_PCT = 15.0  # default, configurable later
 class BreakoutEvent:
     week_start: dt.date
     level: float  # the prior peak that was broken
+    peak_week: dt.date  # week the prior peak (level) was set, i.e. start of the base
 
 
 def detect_breakouts(weekly_bars: list[tuple[dt.date, float]], pullback_pct: float = PULLBACK_PCT) -> list[BreakoutEvent]:
@@ -28,17 +29,23 @@ def detect_breakouts(weekly_bars: list[tuple[dt.date, float]], pullback_pct: flo
     events: list[BreakoutEvent] = []
 
     running_high = weekly_bars[0][1]
+    running_high_week = weekly_bars[0][0]
     trough_since_running_high = running_high
     pending_level: float | None = None  # peak level a future breakout must exceed
+    pending_peak_week: dt.date | None = None  # week that peak was set
     pullback_confirmed = False
 
     for week_start, high in weekly_bars[1:]:
         if high > running_high:
             running_high = high
+            running_high_week = week_start
             trough_since_running_high = high
             if pullback_confirmed and pending_level is not None:
-                events.append(BreakoutEvent(week_start=week_start, level=pending_level))
+                events.append(
+                    BreakoutEvent(week_start=week_start, level=pending_level, peak_week=pending_peak_week)
+                )
                 pending_level = None
+                pending_peak_week = None
                 pullback_confirmed = False
         else:
             if high < trough_since_running_high:
@@ -46,6 +53,7 @@ def detect_breakouts(weekly_bars: list[tuple[dt.date, float]], pullback_pct: flo
             drawdown = (running_high - trough_since_running_high) / running_high * 100
             if drawdown >= pullback_pct and pending_level is None:
                 pending_level = running_high
+                pending_peak_week = running_high_week
                 pullback_confirmed = True
 
     return events

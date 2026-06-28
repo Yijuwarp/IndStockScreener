@@ -40,14 +40,14 @@ def _upsert_weekly_prices(db: Session, stock: Stock, hist: pd.DataFrame) -> None
 
 def _upsert_breakout_metrics(db: Session, stock: Stock) -> None:
     """Recompute ATH-basis breakout metrics from this stock's weekly bars."""
-    weekly_bars = [
-        (wp.week_start, wp.high)
-        for wp in db.query(WeeklyPrice)
+    weekly_rows = (
+        db.query(WeeklyPrice)
         .filter(WeeklyPrice.stock_id == stock.id)
         .order_by(WeeklyPrice.week_start.asc())
         .all()
-        if wp.high is not None
-    ]
+    )
+    weekly_bars = [(wp.week_start, wp.high) for wp in weekly_rows if wp.high is not None]
+    by_week = {wp.week_start: wp for wp in weekly_rows}
 
     events = detect_breakouts(weekly_bars)
 
@@ -65,9 +65,23 @@ def _upsert_breakout_metrics(db: Session, stock: Stock) -> None:
         latest = events[-1]
         bm.breakout_week = latest.week_start
         bm.breakout_level = latest.level
+
+        base_weeks = [
+            w for w in by_week
+            if latest.peak_week <= w <= latest.week_start
+        ]
+        bm.consolidation_weeks = len(base_weeks)
+        highs = [by_week[w].high for w in base_weeks if by_week[w].high is not None]
+        lows = [by_week[w].low for w in base_weeks if by_week[w].low is not None]
+        if highs and lows and latest.level:
+            bm.consolidation_range_pct = (max(highs) - min(lows)) / latest.level * 100
+        else:
+            bm.consolidation_range_pct = None
     else:
         bm.breakout_week = None
         bm.breakout_level = None
+        bm.consolidation_weeks = None
+        bm.consolidation_range_pct = None
 
 
 def upsert_stock_history(db: Session, stock: Stock) -> None:

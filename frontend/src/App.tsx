@@ -108,6 +108,21 @@ function App() {
         </button>
       </form>
 
+      <fieldset className="consolidation-filters">
+        <legend>Consolidation Indicators</legend>
+        <label>
+          Min Consolidation Weeks
+          <input type="number" onChange={(e) => handleChange("min_consolidation_weeks", e.target.value)} />
+        </label>
+        <label>
+          Max Consolidation Range %
+          <input type="number" onChange={(e) => handleChange("max_consolidation_range_pct", e.target.value)} />
+        </label>
+        <button type="button" disabled={loading} onClick={() => runScreen(criteria)}>
+          {loading ? "Screening..." : "Apply"}
+        </button>
+      </fieldset>
+
       {error && <p className="error">{error}</p>}
 
       <table>
@@ -127,6 +142,8 @@ function App() {
             <th>Breakout Count</th>
             <th>Breakout Week</th>
             <th>Breakout Level</th>
+            <th>Consolidation Weeks</th>
+            <th>Consolidation Range %</th>
           </tr>
         </thead>
         <tbody>
@@ -146,6 +163,8 @@ function App() {
               <td>{s.breakout_count}</td>
               <td>{s.breakout_week}</td>
               <td>{s.breakout_level}</td>
+              <td>{s.consolidation_weeks}</td>
+              <td>{s.consolidation_range_pct?.toFixed(2)}</td>
             </tr>
           ))}
         </tbody>

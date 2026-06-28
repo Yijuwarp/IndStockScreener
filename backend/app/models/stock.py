@@ -86,6 +86,8 @@ class BreakoutMetrics(Base):
     breakout_week = Column(Date, nullable=True)  # week this breakout's level was first exceeded
     breakout_level = Column(Float, nullable=True)  # the prior high that was broken
     breakout_count = Column(Integer, nullable=True)  # how many such breakouts this stock has had
+    consolidation_weeks = Column(Integer, nullable=True)  # weeks spent basing before this breakout
+    consolidation_range_pct = Column(Float, nullable=True)  # (max high - min low) / breakout_level over that base
 
     stock = relationship("Stock")
 
