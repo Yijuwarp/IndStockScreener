@@ -23,7 +23,7 @@ class StockOut(BaseModel):
 
 
 class ScreenerCriteria(BaseModel):
-    exchange: Optional[str] = None  # "NSE" or "BSE"
+    exchange: Optional[str] = None  # "NSE" (BSE not yet supported)
     min_market_cap: Optional[float] = None
     max_market_cap: Optional[float] = None
     min_volume: Optional[int] = None

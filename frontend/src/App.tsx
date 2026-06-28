@@ -38,7 +38,6 @@ function App() {
           <select onChange={(e) => handleChange("exchange", e.target.value)}>
             <option value="">Any</option>
             <option value="NSE">NSE</option>
-            <option value="BSE">BSE</option>
           </select>
         </label>
         <label>

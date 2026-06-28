@@ -9,7 +9,7 @@ from app.models.stock import Stock, DailyPrice
 def upsert_stock_history(db: Session, stock: Stock) -> None:
     """Fetch full history for a stock from yfinance and refresh cached snapshot fields."""
     ticker = yf.Ticker(stock.yf_ticker)
-    hist = ticker.history(period="max", auto_adjust=False)
+    hist = ticker.history(period="max", auto_adjust=True)
     if hist.empty:
         return
 

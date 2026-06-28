@@ -9,7 +9,7 @@ class Stock(Base):
 
     id = Column(Integer, primary_key=True)
     symbol = Column(String, nullable=False)
-    exchange = Column(String, nullable=False)  # "NSE" or "BSE"
+    exchange = Column(String, nullable=False)  # "NSE" (BSE not yet supported)
     yf_ticker = Column(String, nullable=False, unique=True)  # e.g. RELIANCE.NS / 500325.BO
     name = Column(String, nullable=False)
     isin = Column(String, nullable=True)
