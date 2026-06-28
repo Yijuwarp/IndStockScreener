@@ -291,6 +291,14 @@ function App() {
 
       {error && <p className="error">{error}</p>}
 
+      {!loading && !error && sortedResults.length === 0 && (
+        <p className="empty-state">
+          No stocks match the current filters.
+          {(criteria.new_all_time_high_this_week || criteria.new_52_week_high_this_week) &&
+            " \"New high this week\" resets every Monday — early in the week, few or no stocks may qualify yet. Try toggling it off."}
+        </p>
+      )}
+
       <div className="table-toolbar">
         <span className="result-count">{sortedResults.length} results</span>
         <div className="column-picker" ref={columnMenuRef}>

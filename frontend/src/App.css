@@ -181,6 +181,14 @@ details.filter-group .filter-group-body {
   font-size: 12px;
 }
 
+.empty-state {
+  color: var(--text-dim);
+  padding: 24px 16px;
+  margin: 0;
+  font-size: 13px;
+  text-align: center;
+}
+
 /* ---------- Range filter buttons ---------- */
 
 .range-filter {
