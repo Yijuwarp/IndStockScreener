@@ -25,6 +25,7 @@ class Stock(Base):
     last_updated = Column(Date, nullable=True)
     avg_weekly_volume = Column(BigInteger, nullable=True)  # trailing 12-week average, liquidity floor
     cap_category = Column(String, nullable=True)  # "Large", "Mid", or "Small" -- rank-based (SEBI convention)
+    weeks_of_history = Column(Integer, nullable=True)  # count of weekly bars, for the min-history filter
 
     prices = relationship("DailyPrice", back_populates="stock", cascade="all, delete-orphan")
 

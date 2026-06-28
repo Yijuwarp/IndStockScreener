@@ -3,12 +3,53 @@ import type { RefreshStatus, ScreenerCriteria, Stock } from "./types";
 import { getStatus, screenStocks } from "./api";
 import "./App.css";
 
+type Column = {
+  key: string;
+  label: string;
+  render: (s: Stock) => React.ReactNode;
+};
+
+const COLUMNS: Column[] = [
+  { key: "symbol", label: "Symbol", render: (s) => s.symbol },
+  { key: "exchange", label: "Exchange", render: (s) => s.exchange },
+  { key: "name", label: "Name", render: (s) => s.name },
+  { key: "current_price", label: "Price", render: (s) => s.current_price },
+  { key: "current_volume", label: "Volume", render: (s) => s.current_volume },
+  { key: "market_cap", label: "Market Cap", render: (s) => s.market_cap },
+  { key: "all_time_high", label: "All-Time High", render: (s) => s.all_time_high },
+  { key: "week_52_high", label: "52-Week High", render: (s) => s.week_52_high },
+  { key: "weekly_close", label: "Weekly Close", render: (s) => s.weekly_close },
+  { key: "weekly_volume", label: "Weekly Volume", render: (s) => s.weekly_volume },
+  { key: "weekly_pct_change", label: "Weekly % Change", render: (s) => s.weekly_pct_change?.toFixed(2) },
+  { key: "breakout_count", label: "Breakout Count", render: (s) => s.breakout_count },
+  { key: "breakout_week", label: "Breakout Week", render: (s) => s.breakout_week },
+  { key: "breakout_level", label: "Breakout Level", render: (s) => s.breakout_level },
+  { key: "consolidation_weeks", label: "Consolidation Weeks", render: (s) => s.consolidation_weeks },
+  { key: "consolidation_range_pct", label: "Consolidation Range %", render: (s) => s.consolidation_range_pct?.toFixed(2) },
+  { key: "extension_pct", label: "Extension %", render: (s) => s.extension_pct?.toFixed(2) },
+  { key: "breakout_age_weeks", label: "Breakout Age (weeks)", render: (s) => s.breakout_age_weeks },
+  { key: "avg_weekly_volume", label: "Avg Weekly Volume", render: (s) => s.avg_weekly_volume },
+  { key: "breakout_volume_ratio", label: "Breakout Volume Ratio", render: (s) => s.breakout_volume_ratio?.toFixed(2) },
+  { key: "cap_category", label: "Cap Category", render: (s) => s.cap_category },
+  { key: "weeks_of_history", label: "Weeks of History", render: (s) => s.weeks_of_history },
+];
+
 function App() {
   const [criteria, setCriteria] = useState<ScreenerCriteria>({ basis: "ATH", new_all_time_high_this_week: true });
   const [results, setResults] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<RefreshStatus | null>(null);
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(new Set(COLUMNS.map((c) => c.key)));
+
+  const toggleColumn = (key: string) => {
+    setVisibleColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const poll = () => getStatus().then(setStatus).catch(() => {});
@@ -158,6 +199,14 @@ function App() {
           Min Breakout Volume Ratio
           <input type="number" onChange={(e) => handleChange("min_breakout_volume_ratio", e.target.value)} />
         </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={criteria.exclude_young_stocks ?? false}
+            onChange={(e) => handleToggle("exclude_young_stocks", e.target.checked)}
+          />
+          Ignore stocks with &lt;10 weeks of history
+        </label>
         <button type="submit" disabled={loading}>
           {loading ? "Screening..." : "Screen Stocks"}
         </button>
@@ -180,56 +229,34 @@ function App() {
 
       {error && <p className="error">{error}</p>}
 
+      <fieldset className="column-toggles">
+        <legend>Columns</legend>
+        {COLUMNS.map((c) => (
+          <label key={c.key}>
+            <input
+              type="checkbox"
+              checked={visibleColumns.has(c.key)}
+              onChange={() => toggleColumn(c.key)}
+            />
+            {c.label}
+          </label>
+        ))}
+      </fieldset>
+
       <table>
         <thead>
           <tr>
-            <th>Symbol</th>
-            <th>Exchange</th>
-            <th>Name</th>
-            <th>Price</th>
-            <th>Volume</th>
-            <th>Market Cap</th>
-            <th>All-Time High</th>
-            <th>52-Week High</th>
-            <th>Weekly Close</th>
-            <th>Weekly Volume</th>
-            <th>Weekly % Change</th>
-            <th>Breakout Count</th>
-            <th>Breakout Week</th>
-            <th>Breakout Level</th>
-            <th>Consolidation Weeks</th>
-            <th>Consolidation Range %</th>
-            <th>Extension %</th>
-            <th>Breakout Age (weeks)</th>
-            <th>Avg Weekly Volume</th>
-            <th>Breakout Volume Ratio</th>
-            <th>Cap Category</th>
+            {COLUMNS.filter((c) => visibleColumns.has(c.key)).map((c) => (
+              <th key={c.key}>{c.label}</th>
+            ))}
           </tr>
         </thead>
         <tbody>
           {results.map((s) => (
             <tr key={s.id}>
-              <td>{s.symbol}</td>
-              <td>{s.exchange}</td>
-              <td>{s.name}</td>
-              <td>{s.current_price}</td>
-              <td>{s.current_volume}</td>
-              <td>{s.market_cap}</td>
-              <td>{s.all_time_high}</td>
-              <td>{s.week_52_high}</td>
-              <td>{s.weekly_close}</td>
-              <td>{s.weekly_volume}</td>
-              <td>{s.weekly_pct_change?.toFixed(2)}</td>
-              <td>{s.breakout_count}</td>
-              <td>{s.breakout_week}</td>
-              <td>{s.breakout_level}</td>
-              <td>{s.consolidation_weeks}</td>
-              <td>{s.consolidation_range_pct?.toFixed(2)}</td>
-              <td>{s.extension_pct?.toFixed(2)}</td>
-              <td>{s.breakout_age_weeks}</td>
-              <td>{s.avg_weekly_volume}</td>
-              <td>{s.breakout_volume_ratio?.toFixed(2)}</td>
-              <td>{s.cap_category}</td>
+              {COLUMNS.filter((c) => visibleColumns.has(c.key)).map((c) => (
+                <td key={c.key}>{c.render(s)}</td>
+              ))}
             </tr>
           ))}
         </tbody>

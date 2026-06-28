@@ -199,6 +199,7 @@ def upsert_stock_history(db: Session, stock: Stock) -> None:
         .order_by(WeeklyPrice.week_start.asc())
         .all()
     )
+    stock.weeks_of_history = len(weekly_rows)
     _update_avg_weekly_volume(stock, weekly_rows)
     _upsert_breakout_metrics(db, stock, "ATH", weekly_rows)
     _upsert_breakout_metrics(db, stock, "52W", weekly_rows)
