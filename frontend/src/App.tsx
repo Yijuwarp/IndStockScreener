@@ -103,6 +103,14 @@ function App() {
           Max % below 52-Week High
           <input type="number" onChange={(e) => handleChange("pct_from_52_week_high_max", e.target.value)} />
         </label>
+        <label>
+          Max Extension %
+          <input type="number" onChange={(e) => handleChange("max_extension_pct", e.target.value)} />
+        </label>
+        <label>
+          Max Breakout Age (weeks)
+          <input type="number" onChange={(e) => handleChange("max_breakout_age_weeks", e.target.value)} />
+        </label>
         <button type="submit" disabled={loading}>
           {loading ? "Screening..." : "Screen Stocks"}
         </button>
@@ -144,6 +152,8 @@ function App() {
             <th>Breakout Level</th>
             <th>Consolidation Weeks</th>
             <th>Consolidation Range %</th>
+            <th>Extension %</th>
+            <th>Breakout Age (weeks)</th>
           </tr>
         </thead>
         <tbody>
@@ -165,6 +175,8 @@ function App() {
               <td>{s.breakout_level}</td>
               <td>{s.consolidation_weeks}</td>
               <td>{s.consolidation_range_pct?.toFixed(2)}</td>
+              <td>{s.extension_pct?.toFixed(2)}</td>
+              <td>{s.breakout_age_weeks}</td>
             </tr>
           ))}
         </tbody>

@@ -77,11 +77,22 @@ def _upsert_breakout_metrics(db: Session, stock: Stock) -> None:
             bm.consolidation_range_pct = (max(highs) - min(lows)) / latest.level * 100
         else:
             bm.consolidation_range_pct = None
+
+        if stock.current_price is not None and latest.level:
+            bm.extension_pct = (stock.current_price - latest.level) / latest.level * 100
+        else:
+            bm.extension_pct = None
+
+        today = dt.date.today()
+        current_week_start = today - dt.timedelta(days=today.weekday())
+        bm.breakout_age_weeks = (current_week_start - latest.week_start).days // 7
     else:
         bm.breakout_week = None
         bm.breakout_level = None
         bm.consolidation_weeks = None
         bm.consolidation_range_pct = None
+        bm.extension_pct = None
+        bm.breakout_age_weeks = None
 
 
 def upsert_stock_history(db: Session, stock: Stock) -> None:
@@ -113,9 +124,6 @@ def upsert_stock_history(db: Session, stock: Stock) -> None:
 
     _upsert_weekly_prices(db, stock, hist)
     db.flush()
-    _upsert_breakout_metrics(db, stock)
-
-    db.flush()
 
     all_time_high_row = hist["High"].idxmax()
     week_52 = hist[hist.index >= hist.index.max() - dt.timedelta(days=365)]
@@ -130,5 +138,7 @@ def upsert_stock_history(db: Session, stock: Stock) -> None:
     stock.week_52_high = float(week_52.loc[week_52_high_row, "High"])
     stock.week_52_high_date = week_52_high_row.date()
     stock.last_updated = dt.date.today()
+
+    _upsert_breakout_metrics(db, stock)
 
     db.commit()

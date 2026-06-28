@@ -69,6 +69,8 @@ def attach_breakout_fields(db: Session, stocks: list[Stock], basis: str = "ATH")
         stock.breakout_level = bm.breakout_level if bm else None
         stock.consolidation_weeks = bm.consolidation_weeks if bm else None
         stock.consolidation_range_pct = bm.consolidation_range_pct if bm else None
+        stock.extension_pct = bm.extension_pct if bm else None
+        stock.breakout_age_weeks = bm.breakout_age_weeks if bm else None
 
     return stocks
 
@@ -127,6 +129,16 @@ def screen_stocks(criteria: ScreenerCriteria, db: Session = Depends(get_db)):
         results = [
             s for s in results
             if s.consolidation_range_pct is not None and s.consolidation_range_pct <= criteria.max_consolidation_range_pct
+        ]
+    if criteria.max_extension_pct is not None:
+        results = [
+            s for s in results
+            if s.extension_pct is not None and s.extension_pct <= criteria.max_extension_pct
+        ]
+    if criteria.max_breakout_age_weeks is not None:
+        results = [
+            s for s in results
+            if s.breakout_age_weeks is not None and s.breakout_age_weeks <= criteria.max_breakout_age_weeks
         ]
 
     return results

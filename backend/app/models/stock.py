@@ -88,6 +88,8 @@ class BreakoutMetrics(Base):
     breakout_count = Column(Integer, nullable=True)  # how many such breakouts this stock has had
     consolidation_weeks = Column(Integer, nullable=True)  # weeks spent basing before this breakout
     consolidation_range_pct = Column(Float, nullable=True)  # (max high - min low) / breakout_level over that base
+    extension_pct = Column(Float, nullable=True)  # current_price vs breakout_level, how far price has run since
+    breakout_age_weeks = Column(Integer, nullable=True)  # weeks since breakout_week
 
     stock = relationship("Stock")
 
