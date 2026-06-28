@@ -1,6 +1,6 @@
-import { useState } from "react";
-import type { ScreenerCriteria, Stock } from "./types";
-import { screenStocks } from "./api";
+import { useEffect, useState } from "react";
+import type { RefreshStatus, ScreenerCriteria, Stock } from "./types";
+import { getStatus, screenStocks } from "./api";
 import "./App.css";
 
 function App() {
@@ -8,6 +8,14 @@ function App() {
   const [results, setResults] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<RefreshStatus | null>(null);
+
+  useEffect(() => {
+    const poll = () => getStatus().then(setStatus).catch(() => {});
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleChange = (key: keyof ScreenerCriteria, value: string) => {
     setCriteria((prev) => ({
@@ -32,6 +40,12 @@ function App() {
   return (
     <div className="screener">
       <h1>IndStockScreener</h1>
+      {status && (
+        <p className="data-status">
+          Data as of: {status.data_as_of ?? "never"}
+          {status.refreshing && " — refreshing..."}
+        </p>
+      )}
       <form onSubmit={handleSubmit} className="criteria-form">
         <label>
           Exchange

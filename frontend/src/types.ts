@@ -13,6 +13,11 @@ export interface Stock {
   last_updated: string | null;
 }
 
+export interface RefreshStatus {
+  refreshing: boolean;
+  data_as_of: string | null;
+}
+
 export interface ScreenerCriteria {
   exchange?: string;
   min_market_cap?: number;

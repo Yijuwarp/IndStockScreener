@@ -1,4 +1,4 @@
-import type { ScreenerCriteria, Stock } from "./types";
+import type { ScreenerCriteria, Stock, RefreshStatus } from "./types";
 
 const API_BASE = "http://localhost:8000";
 
@@ -9,5 +9,11 @@ export async function screenStocks(criteria: ScreenerCriteria): Promise<Stock[]>
     body: JSON.stringify(criteria),
   });
   if (!res.ok) throw new Error(`Screen request failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getStatus(): Promise<RefreshStatus> {
+  const res = await fetch(`${API_BASE}/status`);
+  if (!res.ok) throw new Error(`Status request failed: ${res.status}`);
   return res.json();
 }
