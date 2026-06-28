@@ -70,3 +70,25 @@ class WeeklyPrice(Base):
         UniqueConstraint("stock_id", "week_start", name="uq_stock_week"),
         Index("ix_weekly_prices_stock_week", "stock_id", "week_start"),
     )
+
+
+class BreakoutMetrics(Base):
+    """Precomputed momentum/breakout metrics, one row per (stock, basis).
+
+    basis is "ATH" or "52W" -- which high series breakout events are measured against.
+    """
+    __tablename__ = "breakout_metrics"
+
+    id = Column(Integer, primary_key=True)
+    stock_id = Column(Integer, ForeignKey("stocks.id"), nullable=False)
+    basis = Column(String, nullable=False)  # "ATH" or "52W"
+
+    breakout_week = Column(Date, nullable=True)  # week this breakout's level was first exceeded
+    breakout_level = Column(Float, nullable=True)  # the prior high that was broken
+    breakout_count = Column(Integer, nullable=True)  # how many such breakouts this stock has had
+
+    stock = relationship("Stock")
+
+    __table_args__ = (
+        UniqueConstraint("stock_id", "basis", name="uq_stock_basis"),
+    )

@@ -14,6 +14,9 @@ export interface Stock {
   weekly_close: number | null;
   weekly_volume: number | null;
   weekly_pct_change: number | null;
+  breakout_count: number | null;
+  breakout_week: string | null;
+  breakout_level: number | null;
 }
 
 export interface RefreshStatus {

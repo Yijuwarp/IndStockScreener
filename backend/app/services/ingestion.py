@@ -4,7 +4,8 @@ import pandas as pd
 import yfinance as yf
 from sqlalchemy.orm import Session
 
-from app.models.stock import Stock, DailyPrice, WeeklyPrice
+from app.models.stock import Stock, DailyPrice, WeeklyPrice, BreakoutMetrics
+from app.services.breakout import detect_breakouts
 
 
 def _upsert_weekly_prices(db: Session, stock: Stock, hist: pd.DataFrame) -> None:
@@ -37,6 +38,38 @@ def _upsert_weekly_prices(db: Session, stock: Stock, hist: pd.DataFrame) -> None
         wp.volume = int(row["volume"])
 
 
+def _upsert_breakout_metrics(db: Session, stock: Stock) -> None:
+    """Recompute ATH-basis breakout metrics from this stock's weekly bars."""
+    weekly_bars = [
+        (wp.week_start, wp.high)
+        for wp in db.query(WeeklyPrice)
+        .filter(WeeklyPrice.stock_id == stock.id)
+        .order_by(WeeklyPrice.week_start.asc())
+        .all()
+        if wp.high is not None
+    ]
+
+    events = detect_breakouts(weekly_bars)
+
+    bm = (
+        db.query(BreakoutMetrics)
+        .filter(BreakoutMetrics.stock_id == stock.id, BreakoutMetrics.basis == "ATH")
+        .first()
+    )
+    if bm is None:
+        bm = BreakoutMetrics(stock_id=stock.id, basis="ATH")
+        db.add(bm)
+
+    bm.breakout_count = len(events)
+    if events:
+        latest = events[-1]
+        bm.breakout_week = latest.week_start
+        bm.breakout_level = latest.level
+    else:
+        bm.breakout_week = None
+        bm.breakout_level = None
+
+
 def upsert_stock_history(db: Session, stock: Stock) -> None:
     """Fetch full history for a stock from yfinance and refresh cached snapshot fields."""
     ticker = yf.Ticker(stock.yf_ticker)
@@ -65,6 +98,8 @@ def upsert_stock_history(db: Session, stock: Stock) -> None:
         )
 
     _upsert_weekly_prices(db, stock, hist)
+    db.flush()
+    _upsert_breakout_metrics(db, stock)
 
     db.flush()
 

@@ -124,6 +124,9 @@ function App() {
             <th>Weekly Close</th>
             <th>Weekly Volume</th>
             <th>Weekly % Change</th>
+            <th>Breakout Count</th>
+            <th>Breakout Week</th>
+            <th>Breakout Level</th>
           </tr>
         </thead>
         <tbody>
@@ -140,6 +143,9 @@ function App() {
               <td>{s.weekly_close}</td>
               <td>{s.weekly_volume}</td>
               <td>{s.weekly_pct_change?.toFixed(2)}</td>
+              <td>{s.breakout_count}</td>
+              <td>{s.breakout_week}</td>
+              <td>{s.breakout_level}</td>
             </tr>
           ))}
         </tbody>

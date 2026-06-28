@@ -20,6 +20,9 @@ class StockOut(BaseModel):
     weekly_close: Optional[float] = None
     weekly_volume: Optional[int] = None
     weekly_pct_change: Optional[float] = None
+    breakout_count: Optional[int] = None
+    breakout_week: Optional[dt.date] = None
+    breakout_level: Optional[float] = None
 
     class Config:
         from_attributes = True
