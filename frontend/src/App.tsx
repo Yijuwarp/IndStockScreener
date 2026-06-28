@@ -34,10 +34,12 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const STRING_FIELDS: (keyof ScreenerCriteria)[] = ["exchange", "cap_category"];
+
   const handleChange = (key: keyof ScreenerCriteria, value: string) => {
     setCriteria((prev) => ({
       ...prev,
-      [key]: value === "" ? undefined : key === "exchange" ? value : Number(value),
+      [key]: value === "" ? undefined : STRING_FIELDS.includes(key) ? value : Number(value),
     }));
   };
 
@@ -73,6 +75,15 @@ function App() {
           <select onChange={(e) => handleChange("exchange", e.target.value)}>
             <option value="">Any</option>
             <option value="NSE">NSE</option>
+          </select>
+        </label>
+        <label>
+          Cap Category
+          <select onChange={(e) => handleChange("cap_category", e.target.value)}>
+            <option value="">Any</option>
+            <option value="Large">Large</option>
+            <option value="Mid">Mid</option>
+            <option value="Small">Small</option>
           </select>
         </label>
         <label>
@@ -164,6 +175,7 @@ function App() {
             <th>Breakout Age (weeks)</th>
             <th>Avg Weekly Volume</th>
             <th>Breakout Volume Ratio</th>
+            <th>Cap Category</th>
           </tr>
         </thead>
         <tbody>
@@ -189,6 +201,7 @@ function App() {
               <td>{s.breakout_age_weeks}</td>
               <td>{s.avg_weekly_volume}</td>
               <td>{s.breakout_volume_ratio?.toFixed(2)}</td>
+              <td>{s.cap_category}</td>
             </tr>
           ))}
         </tbody>

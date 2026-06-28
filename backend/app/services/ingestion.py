@@ -8,6 +8,26 @@ from app.models.stock import Stock, DailyPrice, WeeklyPrice, BreakoutMetrics
 from app.services.breakout import detect_breakouts
 
 AVG_VOLUME_WEEKS = 12
+LARGE_CAP_RANK = 100  # SEBI convention: top 100 by market cap
+MID_CAP_RANK = 250  # next 150 (rank 101-250)
+
+
+def recompute_cap_categories(db: Session) -> None:
+    """Rank-based Large/Mid/Small classification across the whole universe."""
+    stocks = (
+        db.query(Stock)
+        .filter(Stock.market_cap.isnot(None))
+        .order_by(Stock.market_cap.desc())
+        .all()
+    )
+    for rank, stock in enumerate(stocks, start=1):
+        if rank <= LARGE_CAP_RANK:
+            stock.cap_category = "Large"
+        elif rank <= MID_CAP_RANK:
+            stock.cap_category = "Mid"
+        else:
+            stock.cap_category = "Small"
+    db.commit()
 
 
 def _upsert_weekly_prices(db: Session, stock: Stock, hist: pd.DataFrame) -> None:

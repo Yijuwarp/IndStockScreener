@@ -29,6 +29,7 @@ class StockOut(BaseModel):
     breakout_age_weeks: Optional[int] = None
     avg_weekly_volume: Optional[int] = None
     breakout_volume_ratio: Optional[float] = None
+    cap_category: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -51,3 +52,4 @@ class ScreenerCriteria(BaseModel):
     max_breakout_age_weeks: Optional[int] = None
     min_avg_weekly_volume: Optional[int] = None
     min_breakout_volume_ratio: Optional[float] = None
+    cap_category: Optional[str] = None  # "Large", "Mid", or "Small"

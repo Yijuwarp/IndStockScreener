@@ -104,6 +104,8 @@ def screen_stocks(criteria: ScreenerCriteria, db: Session = Depends(get_db)):
         query = query.filter(Stock.all_time_high_date >= start_of_week(dt.date.today()))
     if criteria.min_avg_weekly_volume is not None:
         query = query.filter(Stock.avg_weekly_volume >= criteria.min_avg_weekly_volume)
+    if criteria.cap_category:
+        query = query.filter(Stock.cap_category == criteria.cap_category)
 
     results = query.all()
 

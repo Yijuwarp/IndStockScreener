@@ -24,6 +24,7 @@ class Stock(Base):
     week_52_high_date = Column(Date, nullable=True)
     last_updated = Column(Date, nullable=True)
     avg_weekly_volume = Column(BigInteger, nullable=True)  # trailing 12-week average, liquidity floor
+    cap_category = Column(String, nullable=True)  # "Large", "Mid", or "Small" -- rank-based (SEBI convention)
 
     prices = relationship("DailyPrice", back_populates="stock", cascade="all, delete-orphan")
 

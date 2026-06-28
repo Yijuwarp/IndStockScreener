@@ -23,6 +23,7 @@ export interface Stock {
   breakout_age_weeks: number | null;
   avg_weekly_volume: number | null;
   breakout_volume_ratio: number | null;
+  cap_category: string | null;
 }
 
 export interface RefreshStatus {
@@ -47,4 +48,5 @@ export interface ScreenerCriteria {
   max_breakout_age_weeks?: number;
   min_avg_weekly_volume?: number;
   min_breakout_volume_ratio?: number;
+  cap_category?: string;
 }

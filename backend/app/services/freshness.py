@@ -9,7 +9,7 @@ import threading
 
 from app.db.session import SessionLocal
 from app.models.stock import Stock
-from app.services.ingestion import upsert_stock_history
+from app.services.ingestion import upsert_stock_history, recompute_cap_categories
 
 
 class RefreshStatus:
@@ -48,6 +48,7 @@ def _run_refresh():
                 upsert_stock_history(db, stock)
             except Exception:
                 continue
+        recompute_cap_categories(db)
     finally:
         db.close()
 
