@@ -16,10 +16,11 @@
   font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
   width: 100%;
-  min-height: 100vh;
+  height: 100%;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .screener * {
@@ -449,10 +450,30 @@
   color: var(--text-dim);
 }
 
+.search-input {
+  background: var(--panel-bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 5px 10px;
+  font-size: 12px;
+  width: 200px;
+  outline: none;
+}
+
+.search-input:focus {
+  border-color: var(--accent);
+}
+
+.search-input::placeholder {
+  color: var(--text-dim);
+}
+
 .table-wrap {
   flex: 1;
   overflow: auto;
   padding: 0 16px 16px;
+  min-height: 0;
 }
 
 table {

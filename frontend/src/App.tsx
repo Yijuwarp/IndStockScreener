@@ -217,6 +217,7 @@ function App() {
   );
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: "weekly_pct_change", dir: -1 });
+  const [searchQuery, setSearchQuery] = useState("");
   const [dragKey, setDragKey] = useState<string | null>(null);
   const columnMenuRef = useRef<HTMLDivElement>(null);
 
@@ -325,6 +326,14 @@ function App() {
   }, [results, sort]);
 
   const isAth = criteria.basis !== "52W";
+
+  const displayedResults = useMemo(() => {
+    if (!searchQuery.trim()) return sortedResults;
+    const q = searchQuery.trim().toLowerCase();
+    return sortedResults.filter(
+      (s) => s.symbol.toLowerCase().includes(q) || (s.name ?? "").toLowerCase().includes(q)
+    );
+  }, [sortedResults, searchQuery]);
 
   type FilterBlock = { key: string; group: Group; node: React.ReactNode };
 
@@ -595,7 +604,16 @@ function App() {
       )}
 
       <div className="table-toolbar">
-        <span className="result-count">{sortedResults.length} results</span>
+        <span className="result-count">
+          {displayedResults.length}{searchQuery.trim() ? ` of ${sortedResults.length}` : ""} results
+        </span>
+        <input
+          className="search-input"
+          type="search"
+          placeholder="Search symbol or name…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
         <div className="column-picker" ref={columnMenuRef}>
           <button type="button" className="column-picker-button" onClick={() => setColumnMenuOpen((v) => !v)}>
             Columns ▾
@@ -678,7 +696,7 @@ function App() {
             </tr>
           </thead>
           <tbody>
-            {sortedResults.map((s) => (
+            {displayedResults.map((s) => (
               <tr key={s.id}>
                 <td className="pinned-column col-text symbol">{pinnedColumn.render(s)}</td>
                 {orderedVisibleColumns.map((c) => {
