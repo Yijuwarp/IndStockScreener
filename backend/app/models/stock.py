@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, BigInteger, UniqueConstraint, ForeignKey, Index
+from sqlalchemy import Column, Integer, String, Float, Date, Boolean, BigInteger, UniqueConstraint, ForeignKey, Index
 from sqlalchemy.orm import relationship
 
 from app.db.session import Base
@@ -26,6 +26,10 @@ class Stock(Base):
     avg_weekly_volume = Column(BigInteger, nullable=True)  # trailing 12-week average, liquidity floor
     cap_category = Column(String, nullable=True)  # "Large", "Mid", or "Small" -- rank-based (SEBI convention)
     weeks_of_history = Column(Integer, nullable=True)  # count of weekly bars, for the min-history filter
+    listing_date = Column(Date, nullable=True)  # proxy: earliest daily_prices.date (no true NSE listing-date source)
+    ema_21d = Column(Float, nullable=True)
+    ema_50d = Column(Float, nullable=True)
+    ema_200d = Column(Float, nullable=True)
 
     prices = relationship("DailyPrice", back_populates="stock", cascade="all, delete-orphan")
 
@@ -94,9 +98,44 @@ class BreakoutMetrics(Base):
     extension_pct = Column(Float, nullable=True)  # current_price vs breakout_level, how far price has run since
     breakout_age_weeks = Column(Integer, nullable=True)  # weeks since breakout_week
     breakout_volume_ratio = Column(Float, nullable=True)  # breakout week volume / trailing 12-wk avg before it
+    volume_dry_up = Column(Boolean, nullable=True)  # avg(vol, last 3wk before breakout) < 70% of avg(vol, trailing 10wk)
 
     stock = relationship("Stock")
 
     __table_args__ = (
         UniqueConstraint("stock_id", "basis", name="uq_stock_basis"),
+    )
+
+
+class MarketIndex(Base):
+    """A tracked market index for the Index Check-in panel (informational only, not wired into screening)."""
+    __tablename__ = "market_indexes"
+
+    id = Column(Integer, primary_key=True)
+    code = Column(String, nullable=False, unique=True)  # "NIFTY50", "NIFTYMIDCAP100"
+    name = Column(String, nullable=False)
+    yf_ticker = Column(String, nullable=False, unique=True)  # "^NSEI", "^CRSMID"
+
+    current_price = Column(Float, nullable=True)
+    ema_21d = Column(Float, nullable=True)
+    ema_50d = Column(Float, nullable=True)
+    ema_200d = Column(Float, nullable=True)
+    ema_300d = Column(Float, nullable=True)
+    last_updated = Column(Date, nullable=True)
+
+
+class IndexPrice(Base):
+    """Daily close history per tracked index, used to compute its EMAs."""
+    __tablename__ = "index_prices"
+
+    id = Column(Integer, primary_key=True)
+    index_id = Column(Integer, ForeignKey("market_indexes.id"), nullable=False)
+    date = Column(Date, nullable=False)
+    close = Column(Float, nullable=True)
+
+    index = relationship("MarketIndex")
+
+    __table_args__ = (
+        UniqueConstraint("index_id", "date", name="uq_index_date"),
+        Index("ix_index_prices_index_date", "index_id", "date"),
     )

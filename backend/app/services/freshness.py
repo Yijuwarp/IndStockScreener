@@ -9,7 +9,8 @@ import threading
 
 from app.db.session import SessionLocal
 from app.models.stock import Stock
-from app.services.ingestion import upsert_stock_history, recompute_cap_categories
+from app.services.ingestion import batch_upsert_stock_history, recompute_cap_categories
+from app.services.index_ingestion import refresh_all_indexes
 
 
 class RefreshStatus:
@@ -43,12 +44,10 @@ def _run_refresh():
     db = SessionLocal()
     try:
         stocks = db.query(Stock).all()
-        for stock in stocks:
-            try:
-                upsert_stock_history(db, stock)
-            except Exception:
-                continue
+        for _stock, _error in batch_upsert_stock_history(db, stocks):
+            pass
         recompute_cap_categories(db)
+        refresh_all_indexes(db)
     finally:
         db.close()
 

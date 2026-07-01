@@ -25,6 +25,25 @@ export interface Stock {
   breakout_volume_ratio: number | null;
   cap_category: string | null;
   weeks_of_history: number | null;
+  listing_date: string | null;
+  stock_age_days: number | null;
+  ema_21d: number | null;
+  ema_50d: number | null;
+  ema_200d: number | null;
+  has_resistance: boolean | null;
+  volume_dry_up: boolean | null;
+}
+
+export interface MarketIndex {
+  id: number;
+  code: string;
+  name: string;
+  current_price: number | null;
+  ema_21d: number | null;
+  ema_50d: number | null;
+  ema_200d: number | null;
+  ema_300d: number | null;
+  last_updated: string | null;
 }
 
 export interface RefreshStatus {
@@ -54,4 +73,7 @@ export interface ScreenerCriteria {
   cap_category?: string;
   exclude_young_stocks?: boolean;
   min_history_weeks?: number;
+  resistance?: "yes" | "no";
+  min_stock_age_days?: number;
+  max_stock_age_days?: number;
 }

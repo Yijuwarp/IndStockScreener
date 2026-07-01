@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import stocks
+from app.db.session import Base, engine
+from app.routers import stocks, indexes
 from app.services.freshness import check_and_refresh, status
 
 app = FastAPI(title="IndStockScreener API")
@@ -14,10 +15,12 @@ app.add_middleware(
 )
 
 app.include_router(stocks.router)
+app.include_router(indexes.router)
 
 
 @app.on_event("startup")
 def on_startup():
+    Base.metadata.create_all(bind=engine)  # dev-mode: no migrations yet, just ensure schema exists
     check_and_refresh()
 
 

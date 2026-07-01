@@ -31,6 +31,28 @@ class StockOut(BaseModel):
     breakout_volume_ratio: Optional[float] = None
     cap_category: Optional[str] = None
     weeks_of_history: Optional[int] = None
+    listing_date: Optional[dt.date] = None
+    stock_age_days: Optional[int] = None
+    ema_21d: Optional[float] = None
+    ema_50d: Optional[float] = None
+    ema_200d: Optional[float] = None
+    has_resistance: Optional[bool] = None
+    volume_dry_up: Optional[bool] = None
+
+    class Config:
+        from_attributes = True
+
+
+class IndexOut(BaseModel):
+    id: int
+    code: str
+    name: str
+    current_price: Optional[float]
+    ema_21d: Optional[float]
+    ema_50d: Optional[float]
+    ema_200d: Optional[float]
+    ema_300d: Optional[float]
+    last_updated: Optional[dt.date]
 
     class Config:
         from_attributes = True
@@ -58,3 +80,6 @@ class ScreenerCriteria(BaseModel):
     cap_category: Optional[str] = None  # "Large", "Mid", or "Small"
     exclude_young_stocks: Optional[bool] = None  # off by default, per user preference
     min_history_weeks: int = 10
+    resistance: Optional[str] = None  # "yes" or "no" -- only meaningful when basis == "52W"
+    min_stock_age_days: Optional[int] = None
+    max_stock_age_days: Optional[int] = None

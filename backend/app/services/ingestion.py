@@ -10,6 +10,15 @@ from app.services.breakout import detect_breakouts
 AVG_VOLUME_WEEKS = 12
 LARGE_CAP_RANK = 100  # SEBI convention: top 100 by market cap
 MID_CAP_RANK = 250  # next 150 (rank 101-250)
+DRY_UP_RECENT_WEEKS = 3
+DRY_UP_BASELINE_WEEKS = 10
+DRY_UP_THRESHOLD = 0.7  # recent 3wk avg volume must be below 70% of trailing 10wk avg
+
+
+def _ema(series: pd.Series, span: int) -> float | None:
+    if series.empty:
+        return None
+    return float(series.ewm(span=span, adjust=False).mean().iloc[-1])
 
 
 def recompute_cap_categories(db: Session) -> None:
@@ -139,6 +148,17 @@ def _upsert_breakout_metrics(db: Session, stock: Stock, basis: str, weekly_rows:
             bm.breakout_volume_ratio = breakout_volume / avg_prior_volume if avg_prior_volume else None
         else:
             bm.breakout_volume_ratio = None
+
+        baseline_window = weekly_rows[max(0, breakout_idx - DRY_UP_BASELINE_WEEKS):breakout_idx]
+        recent_window = weekly_rows[max(0, breakout_idx - DRY_UP_RECENT_WEEKS):breakout_idx]
+        baseline_volumes = [wp.volume for wp in baseline_window if wp.volume is not None]
+        recent_volumes = [wp.volume for wp in recent_window if wp.volume is not None]
+        if baseline_volumes and recent_volumes:
+            avg_baseline = sum(baseline_volumes) / len(baseline_volumes)
+            avg_recent = sum(recent_volumes) / len(recent_volumes)
+            bm.volume_dry_up = avg_baseline > 0 and avg_recent < DRY_UP_THRESHOLD * avg_baseline
+        else:
+            bm.volume_dry_up = None
     else:
         bm.breakout_week = None
         bm.breakout_level = None
@@ -147,13 +167,42 @@ def _upsert_breakout_metrics(db: Session, stock: Stock, basis: str, weekly_rows:
         bm.extension_pct = None
         bm.breakout_age_weeks = None
         bm.breakout_volume_ratio = None
+        bm.volume_dry_up = None
 
 
-def upsert_stock_history(db: Session, stock: Stock) -> None:
-    """Fetch full history for a stock from yfinance and refresh cached snapshot fields."""
-    ticker = yf.Ticker(stock.yf_ticker)
-    hist = ticker.history(period="max", auto_adjust=True)
-    if hist.empty:
+BATCH_CHUNK_SIZE = 75
+
+
+def fetch_history_batch(tickers: list[str], chunk_size: int = BATCH_CHUNK_SIZE) -> dict[str, pd.DataFrame]:
+    """Batch-fetch full history for many tickers via yf.download(), chunked to stay
+    within Yahoo's per-request limits. Returns only tickers with non-empty history."""
+    results: dict[str, pd.DataFrame] = {}
+    for i in range(0, len(tickers), chunk_size):
+        chunk = tickers[i:i + chunk_size]
+        data = yf.download(
+            chunk, period="max", auto_adjust=True, group_by="ticker", threads=True, progress=False
+        )
+        for ticker in chunk:
+            if ticker not in data.columns.get_level_values(0):
+                continue
+            hist = data[ticker]
+            hist = hist.dropna(subset=["Close"], how="all")
+            if not hist.empty:
+                results[ticker] = hist
+    return results
+
+
+def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = None) -> None:
+    """Refresh cached snapshot fields for a stock from a fetched price history.
+
+    If `hist` is not provided, fetches it for this single ticker (used for one-off
+    refreshes). Batch refreshes should fetch history via `fetch_history_batch` and
+    pass it in directly to avoid one yfinance call per ticker.
+    """
+    if hist is None:
+        single = fetch_history_batch([stock.yf_ticker], chunk_size=1)
+        hist = single.get(stock.yf_ticker)
+    if hist is None or hist.empty:
         return
 
     existing_dates = {
@@ -183,7 +232,7 @@ def upsert_stock_history(db: Session, stock: Stock) -> None:
     week_52 = hist[hist.index >= hist.index.max() - dt.timedelta(days=365)]
     week_52_high_row = week_52["High"].idxmax()
 
-    info = ticker.fast_info
+    info = yf.Ticker(stock.yf_ticker).fast_info
     stock.current_price = float(hist["Close"].iloc[-1])
     stock.current_volume = int(hist["Volume"].iloc[-1])
     stock.market_cap = getattr(info, "market_cap", None)
@@ -192,6 +241,10 @@ def upsert_stock_history(db: Session, stock: Stock) -> None:
     stock.week_52_high = float(week_52.loc[week_52_high_row, "High"])
     stock.week_52_high_date = week_52_high_row.date()
     stock.last_updated = dt.date.today()
+    stock.listing_date = hist.index.min().date()
+    stock.ema_21d = _ema(hist["Close"], 21)
+    stock.ema_50d = _ema(hist["Close"], 50)
+    stock.ema_200d = _ema(hist["Close"], 200)
 
     weekly_rows = (
         db.query(WeeklyPrice)
@@ -205,3 +258,19 @@ def upsert_stock_history(db: Session, stock: Stock) -> None:
     _upsert_breakout_metrics(db, stock, "52W", weekly_rows)
 
     db.commit()
+
+
+def batch_upsert_stock_history(db: Session, stocks: list[Stock], chunk_size: int = BATCH_CHUNK_SIZE):
+    """Refresh history for many stocks at once, batching the yfinance fetch.
+
+    Yields (stock, error) for each input stock as it's processed, so callers can
+    report progress the same way they did with a per-ticker loop. error is None
+    on success.
+    """
+    history_by_ticker = fetch_history_batch([s.yf_ticker for s in stocks], chunk_size=chunk_size)
+    for stock in stocks:
+        try:
+            upsert_stock_history(db, stock, hist=history_by_ticker.get(stock.yf_ticker))
+            yield stock, None
+        except Exception as exc:
+            yield stock, exc

@@ -72,14 +72,29 @@ def attach_breakout_fields(db: Session, stocks: list[Stock], basis: str = "ATH")
         stock.extension_pct = bm.extension_pct if bm else None
         stock.breakout_age_weeks = bm.breakout_age_weeks if bm else None
         stock.breakout_volume_ratio = bm.breakout_volume_ratio if bm else None
+        stock.volume_dry_up = bm.volume_dry_up if bm else None
 
+    return stocks
+
+
+def attach_derived_fields(stocks: list[Stock], basis: str = "ATH") -> list[Stock]:
+    """Attach computed-on-the-fly fields that don't need their own table: stock age and
+    resistance (resistance is only meaningful under the 52W basis -- see PRD-ui-momentum-v2)."""
+    today = dt.date.today()
+    for stock in stocks:
+        stock.stock_age_days = (today - stock.listing_date).days if stock.listing_date else None
+        if basis == "52W" and stock.all_time_high is not None and stock.current_price is not None:
+            stock.has_resistance = stock.all_time_high > stock.current_price
+        else:
+            stock.has_resistance = None
     return stocks
 
 
 @router.get("", response_model=list[StockOut])
 def list_stocks(db: Session = Depends(get_db)):
     stocks = attach_weekly_fields(db, db.query(Stock).all())
-    return attach_breakout_fields(db, stocks)
+    stocks = attach_breakout_fields(db, stocks)
+    return attach_derived_fields(stocks)
 
 
 @router.post("/screen", response_model=list[StockOut])
@@ -128,6 +143,15 @@ def screen_stocks(criteria: ScreenerCriteria, db: Session = Depends(get_db)):
 
     results = attach_weekly_fields(db, results)
     results = attach_breakout_fields(db, results, basis=criteria.basis)
+    results = attach_derived_fields(results, basis=criteria.basis)
+
+    if criteria.resistance is not None and criteria.basis == "52W":
+        want = criteria.resistance == "yes"
+        results = [s for s in results if s.has_resistance is not None and s.has_resistance == want]
+    if criteria.min_stock_age_days is not None:
+        results = [s for s in results if s.stock_age_days is not None and s.stock_age_days >= criteria.min_stock_age_days]
+    if criteria.max_stock_age_days is not None:
+        results = [s for s in results if s.stock_age_days is not None and s.stock_age_days <= criteria.max_stock_age_days]
 
     if criteria.min_consolidation_weeks is not None:
         results = [

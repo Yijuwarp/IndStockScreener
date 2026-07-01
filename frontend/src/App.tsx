@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { RefreshStatus, ScreenerCriteria, Stock } from "./types";
-import { getStatus, screenStocks } from "./api";
+import type { RefreshStatus, ScreenerCriteria, Stock, MarketIndex } from "./types";
+import { getStatus, screenStocks, getIndexes } from "./api";
 import { RangeFilterButton, type RangeField } from "./RangeFilter";
+import { SelectFilterButton } from "./SelectFilter";
+import { getJSONCookie, setJSONCookie } from "./cookies";
+import { FIELD_INFO, COLUMN_GROUPS, FILTER_GROUPS, GROUP_ORDER, GROUP_LABELS, type Group } from "./definitions";
 import "./App.css";
 
 const CRORE = 1e7;
@@ -44,6 +47,37 @@ const CONSOLIDATION_FIELDS: RangeField[] = [
   { criteriaKey: "max_consolidation_range_pct", label: "Max Range", defaultValue: 25, suffix: "%" },
 ];
 
+const STOCK_AGE_FIELDS: RangeField[] = [
+  { criteriaKey: "min_stock_age_days", label: "Min", defaultValue: 10, suffix: " wks", toStored: (v) => Math.round(v * 7), fromStored: (v) => v / 7 },
+  { criteriaKey: "max_stock_age_days", label: "Max", defaultValue: 15, suffix: " yrs", toStored: (v) => Math.round(v * 365), fromStored: (v) => v / 365 },
+];
+
+const RESISTANCE_OPTIONS = [
+  { value: "yes", label: "Resistance" },
+  { value: "no", label: "No Resistance" },
+];
+
+const EXCHANGE_OPTIONS = [{ value: "NSE", label: "NSE" }];
+
+const CAP_CATEGORY_OPTIONS = [
+  { value: "Large", label: "Large" },
+  { value: "Mid", label: "Mid" },
+  { value: "Small", label: "Small" },
+];
+
+// Course presets, applied on first load: market cap floor/ceiling, breakout-volume liquidity
+// threshold, and the IPO-base stock-age window.
+const DEFAULT_CRITERIA: ScreenerCriteria = {
+  basis: "ATH",
+  new_all_time_high_this_week: true,
+  min_market_cap: 500 * CRORE,
+  max_market_cap: 50000 * CRORE,
+  min_avg_weekly_volume: 50000,
+  min_breakout_volume_ratio: 1.5,
+  min_stock_age_days: 70,
+  max_stock_age_days: 5475,
+};
+
 const fmtPrice = (v: number | null | undefined) =>
   v == null ? "" : v.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -58,6 +92,16 @@ const fmtRatio = (v: number | null | undefined) => (v == null ? "" : v.toFixed(2
 
 const fmtDate = (v: string | null | undefined) => v ?? "";
 
+const fmtBool = (v: boolean | null | undefined) => (v == null ? "" : v ? "Yes" : "No");
+
+const fmtAge = (days: number | null | undefined) => {
+  if (days == null) return "";
+  if (days < 365) return `${Math.floor(days / 7)}w`;
+  const years = Math.floor(days / 365);
+  const months = Math.floor((days % 365) / 30);
+  return months > 0 ? `${years}y ${months}mo` : `${years}y`;
+};
+
 type Column = {
   key: string;
   label: string;
@@ -68,7 +112,37 @@ type Column = {
 };
 
 const COLUMNS: Column[] = [
-  { key: "symbol", label: "Symbol", numeric: false, render: (s) => s.symbol, value: (s) => s.symbol },
+  {
+    key: "symbol",
+    label: "Symbol",
+    numeric: false,
+    render: (s) => (
+      <span className="symbol-cell">
+        {s.symbol}
+        <a
+          className="chart-link"
+          href={`https://in.tradingview.com/chart/966eATtq/?symbol=NSE%3A${encodeURIComponent(s.symbol)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          aria-label={`Open ${s.symbol} chart on TradingView`}
+          title="Open chart on TradingView"
+        >
+          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+            <path
+              d="M2 13.5V8.5M6 13.5V5M10 13.5V9.5M14 13.5V3.5M2 8.5L6 5L10 9.5L14 3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </a>
+      </span>
+    ),
+    value: (s) => s.symbol,
+  },
   { key: "exchange", label: "Exchange", numeric: false, render: (s) => s.exchange, value: (s) => s.exchange },
   { key: "name", label: "Name", numeric: false, render: (s) => s.name, value: (s) => s.name },
   { key: "current_price", label: "Price", numeric: true, render: (s) => fmtPrice(s.current_price), value: (s) => s.current_price },
@@ -79,6 +153,9 @@ const COLUMNS: Column[] = [
   { key: "weekly_close", label: "Weekly Close", numeric: true, render: (s) => fmtPrice(s.weekly_close), value: (s) => s.weekly_close },
   { key: "weekly_volume", label: "Weekly Volume", numeric: true, render: (s) => fmtInt(s.weekly_volume), value: (s) => s.weekly_volume },
   { key: "weekly_pct_change", label: "Weekly % Chg", numeric: true, colorize: true, render: (s) => fmtPct(s.weekly_pct_change), value: (s) => s.weekly_pct_change },
+  { key: "ema_21d", label: "21D EMA", numeric: true, render: (s) => fmtPrice(s.ema_21d), value: (s) => s.ema_21d },
+  { key: "ema_50d", label: "50D EMA", numeric: true, render: (s) => fmtPrice(s.ema_50d), value: (s) => s.ema_50d },
+  { key: "ema_200d", label: "200D EMA", numeric: true, render: (s) => fmtPrice(s.ema_200d), value: (s) => s.ema_200d },
   { key: "breakout_count", label: "Breakout #", numeric: true, render: (s) => fmtInt(s.breakout_count), value: (s) => s.breakout_count },
   { key: "breakout_week", label: "Breakout Week", numeric: true, render: (s) => fmtDate(s.breakout_week), value: (s) => s.breakout_week },
   { key: "breakout_level", label: "Breakout Level", numeric: true, render: (s) => fmtPrice(s.breakout_level), value: (s) => s.breakout_level },
@@ -88,26 +165,63 @@ const COLUMNS: Column[] = [
   { key: "breakout_age_weeks", label: "Breakout Age", numeric: true, render: (s) => fmtInt(s.breakout_age_weeks), value: (s) => s.breakout_age_weeks },
   { key: "avg_weekly_volume", label: "Avg Weekly Vol", numeric: true, render: (s) => fmtInt(s.avg_weekly_volume), value: (s) => s.avg_weekly_volume },
   { key: "breakout_volume_ratio", label: "Vol Ratio", numeric: true, render: (s) => fmtRatio(s.breakout_volume_ratio), value: (s) => s.breakout_volume_ratio },
+  { key: "volume_dry_up", label: "Vol Dry-Up", numeric: false, render: (s) => fmtBool(s.volume_dry_up), value: (s) => fmtBool(s.volume_dry_up) },
+  { key: "stock_age", label: "Stock Age", numeric: true, render: (s) => fmtAge(s.stock_age_days), value: (s) => s.stock_age_days },
   { key: "cap_category", label: "Cap", numeric: false, render: (s) => s.cap_category, value: (s) => s.cap_category },
   { key: "weeks_of_history", label: "Weeks of Data", numeric: true, render: (s) => fmtInt(s.weeks_of_history), value: (s) => s.weeks_of_history },
 ];
 
-const DEFAULT_VISIBLE = new Set([
-  "symbol", "name", "current_price", "current_volume", "market_cap",
+// Symbol is pinned: always the leftmost column, never draggable, never hideable.
+const PINNED_COLUMN_KEY = "symbol";
+
+const DEFAULT_VISIBLE = [
+  "name", "current_price", "current_volume", "market_cap",
   "weekly_pct_change", "breakout_count", "breakout_age_weeks",
-  "extension_pct", "breakout_volume_ratio", "cap_category",
-]);
+  "extension_pct", "breakout_volume_ratio", "volume_dry_up", "cap_category",
+];
+
+const DEFAULT_COLUMN_ORDER = [
+  "name",
+  ...GROUP_ORDER.flatMap((g) =>
+    COLUMNS.filter((c) => c.key !== PINNED_COLUMN_KEY && c.key !== "name" && COLUMN_GROUPS[c.key] === g).map((c) => c.key)
+  ),
+];
+
+const COLUMN_ORDER_COOKIE = "iss_column_order";
+const COLUMN_VISIBLE_COOKIE = "iss_column_visible";
+
+function reorderColumns(prev: string[], fromKey: string, toKey: string): string[] {
+  const fromIdx = prev.indexOf(fromKey);
+  const toIdx = prev.indexOf(toKey);
+  if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev;
+  const next = [...prev];
+  next.splice(fromIdx, 1);
+  next.splice(toIdx, 0, fromKey);
+  return next;
+}
 
 function App() {
-  const [criteria, setCriteria] = useState<ScreenerCriteria>({ basis: "ATH", new_all_time_high_this_week: true });
+  const [criteria, setCriteria] = useState<ScreenerCriteria>(DEFAULT_CRITERIA);
   const [results, setResults] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<RefreshStatus | null>(null);
-  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(DEFAULT_VISIBLE);
+  const [indexes, setIndexes] = useState<MarketIndex[]>([]);
+  const [indexPanelOpen, setIndexPanelOpen] = useState(false);
+
+  const [columnOrder, setColumnOrder] = useState<string[]>(() =>
+    getJSONCookie(COLUMN_ORDER_COOKIE, DEFAULT_COLUMN_ORDER)
+  );
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(
+    () => new Set(getJSONCookie<string[]>(COLUMN_VISIBLE_COOKIE, DEFAULT_VISIBLE))
+  );
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: "weekly_pct_change", dir: -1 });
+  const [dragKey, setDragKey] = useState<string | null>(null);
   const columnMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => setJSONCookie(COLUMN_ORDER_COOKIE, columnOrder), [columnOrder]);
+  useEffect(() => setJSONCookie(COLUMN_VISIBLE_COOKIE, Array.from(visibleColumns)), [visibleColumns]);
 
   useEffect(() => {
     const onClickOutside = (e: MouseEvent) => {
@@ -120,6 +234,7 @@ function App() {
   }, []);
 
   const toggleColumn = (key: string) => {
+    if (key === PINNED_COLUMN_KEY) return;
     setVisibleColumns((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -133,6 +248,10 @@ function App() {
     poll();
     const interval = setInterval(poll, 5000);
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    getIndexes().then(setIndexes).catch(() => {});
   }, []);
 
   const runScreen = async (c: ScreenerCriteria) => {
@@ -151,19 +270,6 @@ function App() {
     runScreen(criteria);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const STRING_FIELDS: (keyof ScreenerCriteria)[] = ["exchange", "cap_category"];
-
-  const handleChange = (key: keyof ScreenerCriteria, value: string) => {
-    setCriteria((prev) => ({
-      ...prev,
-      [key]: value === "" ? undefined : STRING_FIELDS.includes(key) ? value : Number(value),
-    }));
-  };
-
-  const handleToggle = (key: keyof ScreenerCriteria, checked: boolean) => {
-    setCriteria((prev) => ({ ...prev, [key]: checked }));
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -191,7 +297,16 @@ function App() {
     setSort((prev) => (prev.key === key ? { key, dir: prev.dir === 1 ? -1 : 1 } : { key, dir: -1 }));
   };
 
-  const visibleColumnList = COLUMNS.filter((c) => visibleColumns.has(c.key));
+  const pinnedColumn = COLUMNS.find((c) => c.key === PINNED_COLUMN_KEY)!;
+
+  const orderedVisibleColumns = useMemo(
+    () =>
+      columnOrder
+        .filter((k) => k !== PINNED_COLUMN_KEY && visibleColumns.has(k))
+        .map((k) => COLUMNS.find((c) => c.key === k)!)
+        .filter(Boolean),
+    [columnOrder, visibleColumns]
+  );
 
   const sortedResults = useMemo(() => {
     const col = COLUMNS.find((c) => c.key === sort.key);
@@ -209,6 +324,178 @@ function App() {
     });
   }, [results, sort]);
 
+  const isAth = criteria.basis !== "52W";
+
+  type FilterBlock = { key: string; group: Group; node: React.ReactNode };
+
+  const filterBlocks: FilterBlock[] = [
+    {
+      key: "market_cap",
+      group: FILTER_GROUPS.market_cap,
+      node: (
+        <RangeFilterButton
+          label="Market Cap"
+          fields={MARKET_CAP_FIELDS}
+          criteria={criteria}
+          onApply={applyFilter}
+          tooltip={FIELD_INFO.market_cap_filter}
+        />
+      ),
+    },
+    ...(isAth
+      ? []
+      : [
+          {
+            key: "resistance",
+            group: FILTER_GROUPS.resistance,
+            node: (
+              <SelectFilterButton
+                label="Resistance"
+                criteriaKey="resistance"
+                options={RESISTANCE_OPTIONS}
+                criteria={criteria}
+                onApply={applyFilter}
+                tooltip={FIELD_INFO.resistance}
+              />
+            ),
+          },
+        ]),
+    {
+      key: "liquidity",
+      group: FILTER_GROUPS.liquidity,
+      node: (
+        <RangeFilterButton
+          label="Liquidity"
+          fields={LIQUIDITY_FIELDS}
+          criteria={criteria}
+          onApply={applyFilter}
+          tooltip={FIELD_INFO.liquidity_filter}
+        />
+      ),
+    },
+    {
+      key: "consolidation",
+      group: FILTER_GROUPS.consolidation,
+      node: (
+        <RangeFilterButton
+          label="Consolidation"
+          fields={CONSOLIDATION_FIELDS}
+          criteria={criteria}
+          onApply={applyFilter}
+          tooltip={FIELD_INFO.consolidation_filter}
+        />
+      ),
+    },
+    {
+      key: "extension",
+      group: FILTER_GROUPS.extension,
+      node: (
+        <RangeFilterButton
+          label="Extension"
+          fields={EXTENSION_FIELDS}
+          criteria={criteria}
+          onApply={applyFilter}
+          tooltip={FIELD_INFO.extension_filter}
+        />
+      ),
+    },
+    {
+      key: "breakout_age",
+      group: FILTER_GROUPS.breakout_age,
+      node: (
+        <RangeFilterButton
+          label="Breakout Age"
+          fields={BREAKOUT_AGE_FIELDS}
+          criteria={criteria}
+          onApply={applyFilter}
+          tooltip={FIELD_INFO.breakout_age_filter}
+        />
+      ),
+    },
+    {
+      key: "pct_from_high",
+      group: FILTER_GROUPS.pct_from_high,
+      node: (
+        <RangeFilterButton
+          label="% From High"
+          fields={PCT_FROM_HIGH_FIELDS}
+          criteria={criteria}
+          onApply={applyFilter}
+          tooltip={FIELD_INFO.pct_from_high_filter}
+        />
+      ),
+    },
+    {
+      key: "stock_age",
+      group: FILTER_GROUPS.stock_age,
+      node: (
+        <RangeFilterButton
+          label="Stock Age"
+          fields={STOCK_AGE_FIELDS}
+          criteria={criteria}
+          onApply={applyFilter}
+          tooltip={FIELD_INFO.stock_age_filter}
+        />
+      ),
+    },
+    {
+      key: "volume",
+      group: FILTER_GROUPS.volume,
+      node: (
+        <RangeFilterButton
+          label="Volume"
+          fields={VOLUME_FIELDS}
+          criteria={criteria}
+          onApply={applyFilter}
+          tooltip={FIELD_INFO.volume_filter}
+        />
+      ),
+    },
+    {
+      key: "price",
+      group: FILTER_GROUPS.price,
+      node: (
+        <RangeFilterButton
+          label="Price"
+          fields={PRICE_FIELDS}
+          criteria={criteria}
+          onApply={applyFilter}
+          tooltip={FIELD_INFO.price_filter}
+        />
+      ),
+    },
+    {
+      key: "exchange",
+      group: FILTER_GROUPS.exchange,
+      node: (
+        <SelectFilterButton
+          label="Exchange"
+          criteriaKey="exchange"
+          options={EXCHANGE_OPTIONS}
+          criteria={criteria}
+          onApply={applyFilter}
+          tooltip={FIELD_INFO.exchange_filter}
+        />
+      ),
+    },
+    {
+      key: "cap_category",
+      group: FILTER_GROUPS.cap_category,
+      node: (
+        <SelectFilterButton
+          label="Cap Category"
+          criteriaKey="cap_category"
+          options={CAP_CATEGORY_OPTIONS}
+          criteria={criteria}
+          onApply={applyFilter}
+          tooltip={FIELD_INFO.cap_category_filter}
+        />
+      ),
+    },
+  ];
+
+  const orderedFilterBlocks = GROUP_ORDER.flatMap((g) => filterBlocks.filter((f) => f.group === g));
+
   return (
     <div className="screener">
       <div className="topbar">
@@ -221,25 +508,9 @@ function App() {
             52-Week High
           </button>
         </div>
-        {criteria.basis !== "52W" ? (
-          <label className="new-high-toggle">
-            <input
-              type="checkbox"
-              checked={criteria.new_all_time_high_this_week ?? false}
-              onChange={(e) => handleToggle("new_all_time_high_this_week", e.target.checked)}
-            />
-            New ATH this week
-          </label>
-        ) : (
-          <label className="new-high-toggle">
-            <input
-              type="checkbox"
-              checked={criteria.new_52_week_high_this_week ?? false}
-              onChange={(e) => handleToggle("new_52_week_high_this_week", e.target.checked)}
-            />
-            New 52W high this week
-          </label>
-        )}
+        <button type="button" className="index-panel-toggle" onClick={() => setIndexPanelOpen((v) => !v)}>
+          Index Check-in {indexPanelOpen ? "▴" : "▾"}
+        </button>
         {status && (
           <span className={"data-status" + (status.refreshing ? " refreshing" : "")}>
             Data as of: {status.data_as_of ?? "never"}
@@ -248,46 +519,70 @@ function App() {
         )}
       </div>
 
+      {indexPanelOpen && (
+        <div className="index-panel">
+          <table className="index-panel-table">
+            <thead>
+              <tr>
+                <th className="col-text">Index</th>
+                <th>Price</th>
+                <th title="21-day EMA (~3 weeks)">21D (3W)</th>
+                <th title="50-day EMA (~7 weeks)">50D (7W)</th>
+                <th title="200-day EMA (~28 weeks)">200D (28W)</th>
+                <th title="300-day EMA (~42 weeks)">300D (42W)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {indexes.map((idx) => {
+                const emaClass = (ema: number | null | undefined) =>
+                  idx.current_price == null || ema == null ? "" : idx.current_price >= ema ? "positive" : "negative";
+                return (
+                  <tr key={idx.id}>
+                    <td className="col-text">{idx.name}</td>
+                    <td>{fmtPrice(idx.current_price)}</td>
+                    <td className={emaClass(idx.ema_21d)}>{fmtPrice(idx.ema_21d)}</td>
+                    <td className={emaClass(idx.ema_50d)}>{fmtPrice(idx.ema_50d)}</td>
+                    <td className={emaClass(idx.ema_200d)}>{fmtPrice(idx.ema_200d)}</td>
+                    <td className={emaClass(idx.ema_300d)}>{fmtPrice(idx.ema_300d)}</td>
+                  </tr>
+                );
+              })}
+              {indexes.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="col-text index-panel-empty">Loading index data...</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          <p className="index-panel-note">
+            NIFTY Smallcap 100 isn't shown — no reliable historical data source yet for it.
+          </p>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="filter-bar">
-        <div className="filter-field">
-          <label>Exchange</label>
-          <select onChange={(e) => handleChange("exchange", e.target.value)}>
-            <option value="">Any</option>
-            <option value="NSE">NSE</option>
-          </select>
-        </div>
-        <div className="filter-field">
-          <label>Cap Category</label>
-          <select onChange={(e) => handleChange("cap_category", e.target.value)}>
-            <option value="">Any</option>
-            <option value="Large">Large</option>
-            <option value="Mid">Mid</option>
-            <option value="Small">Small</option>
-          </select>
-        </div>
+        {orderedFilterBlocks.map((f) => <div key={f.key}>{f.node}</div>)}
+        {(() => {
+          const key = isAth ? "new_all_time_high_this_week" : "new_52_week_high_this_week";
+          const active = isAth ? (criteria.new_all_time_high_this_week ?? false) : (criteria.new_52_week_high_this_week ?? false);
+          return (
+            <button
+              type="button"
+              className={"range-filter-button" + (active ? " active" : "")}
+              title={FIELD_INFO.new_high_toggle}
+              onClick={() => applyFilter({ [key]: !active } as Partial<ScreenerCriteria>)}
+            >
+              {isAth ? "New ATH this week" : "New 52W high this week"}
+            </button>
+          );
+        })()}
+      </form>
 
-        <RangeFilterButton label="Market Cap" fields={MARKET_CAP_FIELDS} criteria={criteria} onApply={applyFilter} />
-        <RangeFilterButton label="Volume" fields={VOLUME_FIELDS} criteria={criteria} onApply={applyFilter} />
-        <RangeFilterButton label="Price" fields={PRICE_FIELDS} criteria={criteria} onApply={applyFilter} />
-        <RangeFilterButton label="% From High" fields={PCT_FROM_HIGH_FIELDS} criteria={criteria} onApply={applyFilter} />
-        <RangeFilterButton label="Extension" fields={EXTENSION_FIELDS} criteria={criteria} onApply={applyFilter} />
-        <RangeFilterButton label="Breakout Age" fields={BREAKOUT_AGE_FIELDS} criteria={criteria} onApply={applyFilter} />
-        <RangeFilterButton label="Liquidity" fields={LIQUIDITY_FIELDS} criteria={criteria} onApply={applyFilter} />
-        <RangeFilterButton label="Consolidation" fields={CONSOLIDATION_FIELDS} criteria={criteria} onApply={applyFilter} />
-
-        <label className="new-high-toggle">
-          <input
-            type="checkbox"
-            checked={criteria.exclude_young_stocks ?? false}
-            onChange={(e) => handleToggle("exclude_young_stocks", e.target.checked)}
-          />
-          Hide &lt;10wk stocks
-        </label>
-
-        <button type="submit" className="screen-button" disabled={loading}>
+      <div className="screen-row">
+        <button type="button" className="screen-button" disabled={loading} onClick={() => runScreen(criteria)}>
           {loading ? "Screening..." : "Screen"}
         </button>
-      </form>
+      </div>
 
       {error && <p className="error">{error}</p>}
 
@@ -307,11 +602,33 @@ function App() {
           </button>
           {columnMenuOpen && (
             <div className="column-picker-menu">
-              {COLUMNS.map((c) => (
-                <label key={c.key}>
-                  <input type="checkbox" checked={visibleColumns.has(c.key)} onChange={() => toggleColumn(c.key)} />
-                  {c.label}
-                </label>
+              <div className="column-picker-group">
+                <div className="column-picker-group-label">Pinned</div>
+                <div className="column-picker-row" title="Symbol is always shown leftmost and can't be hidden.">
+                  <label className="column-picker-row-pinned">
+                    <input type="checkbox" checked disabled />
+                    {pinnedColumn.label}
+                  </label>
+                </div>
+              </div>
+              {GROUP_ORDER.map((g) => (
+                <div key={g} className="column-picker-group">
+                  <div className="column-picker-group-label">{GROUP_LABELS[g]}</div>
+                  {columnOrder
+                    .filter((k) => COLUMN_GROUPS[k] === g)
+                    .map((k) => {
+                      const c = COLUMNS.find((col) => col.key === k);
+                      if (!c) return null;
+                      return (
+                        <div key={k} className="column-picker-row" title={FIELD_INFO[k]}>
+                          <label>
+                            <input type="checkbox" checked={visibleColumns.has(k)} onChange={() => toggleColumn(k)} />
+                            {c.label}
+                          </label>
+                        </div>
+                      );
+                    })}
+                </div>
               ))}
             </div>
           )}
@@ -322,11 +639,38 @@ function App() {
         <table>
           <thead>
             <tr>
-              {visibleColumnList.map((c) => (
+              <th
+                key={pinnedColumn.key}
+                className={"pinned-column " + (pinnedColumn.numeric ? "" : "col-text ") + (sort.key === pinnedColumn.key ? "sorted" : "")}
+                onClick={() => handleSort(pinnedColumn.key)}
+                title={FIELD_INFO[pinnedColumn.key]}
+              >
+                {pinnedColumn.label}{sort.key === pinnedColumn.key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
+              </th>
+              {orderedVisibleColumns.map((c) => (
                 <th
                   key={c.key}
-                  className={(c.numeric ? "" : "col-text ") + (sort.key === c.key ? "sorted" : "")}
+                  className={
+                    (c.numeric ? "" : "col-text ") +
+                    (sort.key === c.key ? "sorted " : "") +
+                    (dragKey === c.key ? "dragging" : "")
+                  }
                   onClick={() => handleSort(c.key)}
+                  title={FIELD_INFO[c.key]}
+                  draggable
+                  onDragStart={(e) => {
+                    e.stopPropagation();
+                    setDragKey(c.key);
+                  }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (dragKey && dragKey !== c.key) {
+                      setColumnOrder((prev) => reorderColumns(prev, dragKey, c.key));
+                    }
+                    setDragKey(null);
+                  }}
+                  onDragEnd={() => setDragKey(null)}
                 >
                   {c.label}{sort.key === c.key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
                 </th>
@@ -336,11 +680,12 @@ function App() {
           <tbody>
             {sortedResults.map((s) => (
               <tr key={s.id}>
-                {visibleColumnList.map((c) => {
+                <td className="pinned-column col-text symbol">{pinnedColumn.render(s)}</td>
+                {orderedVisibleColumns.map((c) => {
                   const v = c.value(s);
                   const colorClass = c.colorize && typeof v === "number" ? (v >= 0 ? "positive" : "negative") : "";
                   return (
-                    <td key={c.key} className={(c.numeric ? "" : "col-text ") + (c.key === "symbol" ? "symbol " : "") + colorClass}>
+                    <td key={c.key} className={(c.numeric ? "" : "col-text ") + colorClass}>
                       {c.render(s)}
                     </td>
                   );

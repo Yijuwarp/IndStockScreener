@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ScreenerCriteria } from "./types";
+import { formatIndianInput, unformatIndianInput } from "./format";
 
 export type RangeField = {
   criteriaKey: keyof ScreenerCriteria;
@@ -16,9 +17,10 @@ type Props = {
   fields: RangeField[];
   criteria: ScreenerCriteria;
   onApply: (patch: Partial<ScreenerCriteria>) => void;
+  tooltip?: string;
 };
 
-export function RangeFilterButton({ label, fields, criteria, onApply }: Props) {
+export function RangeFilterButton({ label, fields, criteria, onApply, tooltip }: Props) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const ref = useRef<HTMLDivElement>(null);
@@ -30,7 +32,7 @@ export function RangeFilterButton({ label, fields, criteria, onApply }: Props) {
     for (const f of fields) {
       const stored = criteria[f.criteriaKey];
       const display = stored != null ? (f.fromStored ? f.fromStored(stored as number) : (stored as number)) : f.defaultValue;
-      next[f.criteriaKey as string] = String(display);
+      next[f.criteriaKey as string] = formatIndianInput(String(display));
     }
     setDraft(next);
     setOpen(true);
@@ -47,8 +49,8 @@ export function RangeFilterButton({ label, fields, criteria, onApply }: Props) {
   const apply = () => {
     const patch: Partial<ScreenerCriteria> = {};
     for (const f of fields) {
-      const raw = draft[f.criteriaKey as string];
-      if (raw === "" || raw == null) {
+      const raw = unformatIndianInput(draft[f.criteriaKey as string] ?? "");
+      if (raw === "") {
         (patch as Record<string, unknown>)[f.criteriaKey as string] = undefined;
         continue;
       }
@@ -73,14 +75,19 @@ export function RangeFilterButton({ label, fields, criteria, onApply }: Props) {
       .map((f) => {
         const stored = criteria[f.criteriaKey] as number;
         const display = f.fromStored ? f.fromStored(stored) : stored;
-        return display.toLocaleString("en-IN") + (f.suffix ?? "");
+        return formatIndianInput(String(display)) + (f.suffix ?? "");
       });
     return `${label}: ${parts.join(" – ")}`;
   };
 
   return (
     <div className="range-filter" ref={ref}>
-      <button type="button" className={"range-filter-button" + (isActive ? " active" : "")} onClick={openPopover}>
+      <button
+        type="button"
+        className={"range-filter-button" + (isActive ? " active" : "")}
+        onClick={openPopover}
+        title={tooltip}
+      >
         {summary()} ▾
       </button>
       {open && (
@@ -90,9 +97,15 @@ export function RangeFilterButton({ label, fields, criteria, onApply }: Props) {
               <label>{f.label}</label>
               <div className="range-filter-input">
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={draft[f.criteriaKey as string] ?? ""}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, [f.criteriaKey as string]: e.target.value }))}
+                  onChange={(e) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      [f.criteriaKey as string]: formatIndianInput(e.target.value),
+                    }))
+                  }
                 />
                 {f.suffix && <span className="range-filter-suffix">{f.suffix}</span>}
               </div>
