@@ -5,9 +5,9 @@ run the normal refresh locally against SQLite, then push the results with:
 
     python -m scripts.migrate_to_pg "<external postgres url from Render>"
 
-Copies stocks, breakout_metrics, weekly_prices, market_indexes, and index_prices
-(daily_prices is skipped: it's an ingestion-time archive, never read by the API).
-Target tables are truncated first so ids stay consistent.
+Copies all tables including daily_prices -- incremental ingestion computes ATH,
+EMAs, listing dates, and weekly bars from the stored dailies, so they must exist
+wherever ingestion runs. Target tables are truncated first so ids stay consistent.
 """
 import sqlite3
 import sys
@@ -42,6 +42,10 @@ TABLES: list[tuple[str, list[str]]] = [
     (
         "weekly_prices",
         ["id", "stock_id", "week_start", "open", "high", "low", "close", "volume"],
+    ),
+    (
+        "daily_prices",
+        ["id", "stock_id", "date", "open", "high", "low", "close", "volume"],
     ),
     (
         "market_indexes",

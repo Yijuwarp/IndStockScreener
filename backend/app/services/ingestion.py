@@ -303,7 +303,21 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
         db.query(sa_func.max(DailyPrice.date)).filter(DailyPrice.stock_id == stock.id).scalar()
     )
 
-    if last_date is not None and _detect_back_adjustment(db, stock, hist, last_date):
+    needs_full = last_date is not None and _detect_back_adjustment(db, stock, hist, last_date)
+
+    # Safety net: if the stored dailies don't reach back to the stock's known
+    # listing date (missing/partial archive), metrics computed from them would be
+    # garbage -- rebuild from full history unless this fetch already covers it.
+    if not needs_full and stock.listing_date is not None:
+        earliest = (
+            db.query(sa_func.min(DailyPrice.date)).filter(DailyPrice.stock_id == stock.id).scalar()
+        )
+        archive_ok = earliest is not None and earliest <= stock.listing_date + dt.timedelta(days=7)
+        fetch_covers = hist.index.min().date() <= stock.listing_date + dt.timedelta(days=7)
+        if not archive_ok and not fetch_covers:
+            needs_full = True
+
+    if needs_full:
         full = fetch_history_batch([stock.yf_ticker], chunk_size=1, period="max")
         full_hist = full.get(stock.yf_ticker)
         if full_hist is None or full_hist.empty:
