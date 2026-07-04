@@ -150,12 +150,12 @@ def _upsert_breakout_metrics(db: Session, stock: Stock, basis: str, weekly_rows:
     by_week = {wp.week_start: wp for wp in weekly_rows}
     by_index = {wp.week_start: i for i, wp in enumerate(weekly_rows)}
 
-    if basis == "ATH":
-        high_series = [(wp.week_start, wp.high) for wp in weekly_rows if wp.high is not None]
-    else:
-        high_series = _rolling_52w_high(weekly_rows)
-
-    events = detect_breakouts(high_series)
+    bars = [
+        (wp.week_start, wp.high, wp.low, wp.close)
+        for wp in weekly_rows
+        if wp.high is not None and wp.low is not None and wp.close is not None
+    ]
+    events = detect_breakouts(bars, basis=basis)
 
     bm = (
         db.query(BreakoutMetrics)
@@ -174,7 +174,7 @@ def _upsert_breakout_metrics(db: Session, stock: Stock, basis: str, weekly_rows:
 
         base_weeks = [
             w for w in by_week
-            if latest.peak_week <= w <= latest.week_start
+            if latest.peak_week < w < latest.week_start
         ]
         bm.consolidation_weeks = len(base_weeks)
         highs = [by_week[w].high for w in base_weeks if by_week[w].high is not None]

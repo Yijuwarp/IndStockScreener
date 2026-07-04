@@ -386,10 +386,8 @@ const COLUMNS: Column[] = [
 const PINNED_COLUMN_KEY = "symbol";
 
 const DEFAULT_VISIBLE = [
-  "flags", "score", "name", "current_price", "current_volume", "market_cap",
-  "weekly_pct_change", "breakout_count", "breakout_age_weeks",
-  "extension_pct", "breakout_volume_ratio", "volume_dry_up", "ema_trend", "ema_10w",
-  "cap_category", "sector", "industry", "revenue_growth", "earnings_growth",
+  "flags", "score", "name", "current_price", "market_cap", "weekly_pct_change",
+  "breakout_age_weeks", "extension_pct", "breakout_volume_ratio", "ema_trend",
 ];
 
 const DEFAULT_COLUMN_ORDER = [
@@ -400,7 +398,7 @@ const DEFAULT_COLUMN_ORDER = [
 ];
 
 const COLUMN_ORDER_COOKIE = "iss_column_order";
-const COLUMN_VISIBLE_COOKIE = "iss_column_visible";
+const COLUMN_VISIBLE_COOKIE = "iss_column_visible_v2";
 const WATCHLIST_COOKIE = "iss_watchlist";
 
 function sortRows(rows: Stock[], sort: { key: string; dir: 1 | -1 }): Stock[] {
@@ -476,6 +474,7 @@ function App() {
   const [status, setStatus] = useState<RefreshStatus | null>(null);
   const [indexes, setIndexes] = useState<MarketIndex[]>([]);
   const [indexPanelOpen, setIndexPanelOpen] = useState(false);
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() => {
     const stored = getJSONCookie<string[]>(COLUMN_ORDER_COOKIE, DEFAULT_COLUMN_ORDER);
@@ -579,29 +578,46 @@ function App() {
   }, []);
 
   const wakeRetries = useRef(0);
+  const requestSequence = useRef(0);
+  const retryTimer = useRef<number | undefined>(undefined);
   const MAX_WAKE_RETRIES = 15; // ~2 min, covers a Render free-tier cold start
 
-  const runScreen = async (c: ScreenerCriteria) => {
+  const runScreen = async (c: ScreenerCriteria, isRetry = false) => {
+    if (!isRetry) {
+      wakeRetries.current = 0;
+      if (retryTimer.current !== undefined) clearTimeout(retryTimer.current);
+    }
+    const requestId = ++requestSequence.current;
+    let retryScheduled = false;
     setLoading(true);
     setError(null);
     try {
-      setResults(await screenStocks(c));
+      const rows = await screenStocks(c);
+      if (requestId !== requestSequence.current) return;
+      setResults(rows);
       wakeRetries.current = 0;
     } catch (err) {
+      if (requestId !== requestSequence.current) return;
       // A network error with no data yet usually means the free-tier backend is
       // cold-starting -- keep retrying quietly instead of showing a dead page.
       const isNetworkError = err instanceof TypeError;
       if (isNetworkError && wakeRetries.current < MAX_WAKE_RETRIES) {
         wakeRetries.current += 1;
         setError("Backend is waking up (free hosting spins down when idle) — retrying…");
-        setTimeout(() => runScreen(c), 8000);
+        retryScheduled = true;
+        retryTimer.current = window.setTimeout(() => runScreen(c, true), 8000);
         return; // keep the loading state visible while we wait
       }
       setError(String(err));
     } finally {
-      setLoading(false);
+      if (requestId === requestSequence.current && !retryScheduled) setLoading(false);
     }
   };
+
+  useEffect(() => () => {
+    requestSequence.current += 1;
+    if (retryTimer.current !== undefined) clearTimeout(retryTimer.current);
+  }, []);
 
   useEffect(() => {
     runScreen(criteria);
@@ -614,11 +630,9 @@ function App() {
   };
 
   const applyFilter = (patch: Partial<ScreenerCriteria>) => {
-    setCriteria((prev) => {
-      const next = { ...prev, ...patch };
-      runScreen(next);
-      return next;
-    });
+    const next = { ...criteria, ...patch };
+    setCriteria(next);
+    runScreen(next);
   };
 
   const applyPreset = (preset: ScreenerCriteria) => {
@@ -627,16 +641,14 @@ function App() {
   };
 
   const handleBasisChange = (basis: "ATH" | "52W") => {
-    setCriteria((prev) => {
-      const next = {
-        ...prev,
-        basis,
-        new_all_time_high_this_week: basis === "ATH" ? true : undefined,
-        new_52_week_high_this_week: basis === "52W" ? true : undefined,
-      };
-      runScreen(next);
-      return next;
-    });
+    const next = {
+      ...criteria,
+      basis,
+      new_all_time_high_this_week: basis === "ATH" ? true : undefined,
+      new_52_week_high_this_week: basis === "52W" ? true : undefined,
+    };
+    setCriteria(next);
+    runScreen(next);
   };
 
   const handleSort = (key: string) => {
@@ -871,6 +883,9 @@ function App() {
   ];
 
   const orderedFilterBlocks = GROUP_ORDER.flatMap((g) => filterBlocks.filter((f) => f.group === g));
+  const primaryFilterKeys = new Set(["market_cap", "liquidity", "stock_age"]);
+  const primaryFilterBlocks = orderedFilterBlocks.filter((f) => primaryFilterKeys.has(f.key));
+  const advancedFilterBlocks = orderedFilterBlocks.filter((f) => !primaryFilterKeys.has(f.key));
 
   // Header + row markup shared by the watchlist table and the main results table,
   // so sorting, column order, and visibility stay in lockstep between them.
@@ -1035,7 +1050,7 @@ function App() {
       )}
 
       <form onSubmit={handleSubmit} className="filter-bar">
-        {orderedFilterBlocks.map((f) => <div key={f.key}>{f.node}</div>)}
+        {primaryFilterBlocks.map((f) => <div key={f.key}>{f.node}</div>)}
         {(() => {
           const key = isAth ? "new_all_time_high_this_week" : "new_52_week_high_this_week";
           const active = isAth ? (criteria.new_all_time_high_this_week ?? false) : (criteria.new_52_week_high_this_week ?? false);
@@ -1043,14 +1058,29 @@ function App() {
             <button
               type="button"
               className={"range-filter-button" + (active ? " active" : "")}
+              aria-pressed={active}
               title={FIELD_INFO.new_high_toggle}
               onClick={() => applyFilter({ [key]: !active } as Partial<ScreenerCriteria>)}
             >
-              {isAth ? "New ATH this week" : "New 52W high this week"}
+              {active ? "Only " : ""}{isAth ? "new ATH this week" : "new 52W high this week"}
             </button>
           );
         })()}
+        <button
+          type="button"
+          className="advanced-filter-toggle"
+          aria-expanded={advancedFiltersOpen}
+          onClick={() => setAdvancedFiltersOpen((open) => !open)}
+        >
+          {advancedFiltersOpen ? "Hide more filters" : `More filters (${advancedFilterBlocks.length})`}
+        </button>
       </form>
+
+      {advancedFiltersOpen && (
+        <div className="advanced-filter-bar">
+          {advancedFilterBlocks.map((f) => <div key={f.key}>{f.node}</div>)}
+        </div>
+      )}
 
       <div className="presets-row">
         <span className="presets-label">Presets:</span>
@@ -1066,20 +1096,27 @@ function App() {
         ))}
       </div>
 
-      <div className="screen-row">
-        <button type="button" className="screen-button" disabled={loading} onClick={() => runScreen(criteria)}>
-          {loading ? "Screening..." : "Screen"}
-        </button>
-      </div>
-
       {error && <p className="error">{error}</p>}
 
       {!loading && !error && sortedResults.length === 0 && (
-        <p className="empty-state">
-          No stocks match the current filters.
+        <div className="empty-state">
+          <strong>No stocks match this screen.</strong>
           {(criteria.new_all_time_high_this_week || criteria.new_52_week_high_this_week) &&
-            " \"New high this week\" resets every Monday — early in the week, few or no stocks may qualify yet. Try toggling it off."}
-        </p>
+            <span> New highs reset every Monday, so early-week results can be sparse.</span>}
+          <div className="empty-state-actions">
+            {(criteria.new_all_time_high_this_week || criteria.new_52_week_high_this_week) && (
+              <button
+                type="button"
+                onClick={() => applyFilter({
+                  [isAth ? "new_all_time_high_this_week" : "new_52_week_high_this_week"]: false,
+                } as Partial<ScreenerCriteria>)}
+              >
+                Show broader candidates
+              </button>
+            )}
+            <button type="button" onClick={() => applyPreset(DEFAULT_CRITERIA)}>Reset course defaults</button>
+          </div>
+        </div>
       )}
 
       {watchlist.length > 0 && (
@@ -1100,7 +1137,9 @@ function App() {
 
       <div className="table-toolbar">
         <span className="result-count">
-          {searchQuery.trim()
+          {loading
+            ? "Updating results…"
+            : searchQuery.trim()
             ? `${displayedResults.length} in filters + ${allStocks ? outsideMatches.length : "…"} outside`
             : `${displayedResults.length} results`}
         </span>

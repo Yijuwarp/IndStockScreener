@@ -18,42 +18,26 @@ class BreakoutEvent:
     peak_week: dt.date  # week the prior peak (level) was set, i.e. start of the base
 
 
-def detect_breakouts(weekly_bars: list[tuple[dt.date, float]], pullback_pct: float = PULLBACK_PCT) -> list[BreakoutEvent]:
-    """weekly_bars: list of (week_start, high), ascending by week_start.
-
-    Returns every confirmed breakout event in chronological order.
-    """
-    if not weekly_bars:
+def detect_breakouts(
+    weekly_bars: list[tuple[dt.date, float, float, float]],
+    basis: str = "ATH",
+    pullback_pct: float = PULLBACK_PCT,
+) -> list[BreakoutEvent]:
+    """Return weekly-close breakouts after a qualifying low-price pullback."""
+    if len(weekly_bars) < 2:
         return []
-
     events: list[BreakoutEvent] = []
-
-    running_high = weekly_bars[0][1]
-    running_high_week = weekly_bars[0][0]
-    trough_since_running_high = running_high
-    pending_level: float | None = None  # peak level a future breakout must exceed
-    pending_peak_week: dt.date | None = None  # week that peak was set
-    pullback_confirmed = False
-
-    for week_start, high in weekly_bars[1:]:
-        if high > running_high:
-            running_high = high
-            running_high_week = week_start
-            trough_since_running_high = high
-            if pullback_confirmed and pending_level is not None:
-                events.append(
-                    BreakoutEvent(week_start=week_start, level=pending_level, peak_week=pending_peak_week)
-                )
-                pending_level = None
-                pending_peak_week = None
-                pullback_confirmed = False
-        else:
-            if high < trough_since_running_high:
-                trough_since_running_high = high
-            drawdown = (running_high - trough_since_running_high) / running_high * 100
-            if drawdown >= pullback_pct and pending_level is None:
-                pending_level = running_high
-                pending_peak_week = running_high_week
-                pullback_confirmed = True
-
+    for i in range(1, len(weekly_bars)):
+        week_start, _high, _low, close = weekly_bars[i]
+        start = 0 if basis == "ATH" else max(0, i - 52)
+        prior = weekly_bars[start:i]
+        level = max(bar[1] for bar in prior)
+        peak_offset = max(j for j, bar in enumerate(prior) if bar[1] == level)
+        peak_index = start + peak_offset
+        base = weekly_bars[peak_index + 1:i]
+        if not base or close <= level:
+            continue
+        trough = min(bar[2] for bar in base)
+        if (level - trough) / level * 100 >= pullback_pct:
+            events.append(BreakoutEvent(week_start, level, weekly_bars[peak_index][0]))
     return events

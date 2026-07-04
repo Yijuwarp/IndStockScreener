@@ -113,6 +113,30 @@
   border-bottom: 1px solid var(--border);
 }
 
+.advanced-filter-toggle {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.advanced-filter-toggle:hover {
+  color: var(--text-bright);
+  border-color: var(--accent);
+}
+
+.advanced-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--panel-bg-alt);
+  border-bottom: 1px solid var(--border);
+}
+
 .filter-field {
   display: flex;
   flex-direction: column;
@@ -322,10 +346,31 @@
 
 .empty-state {
   color: var(--text-dim);
-  padding: 24px 16px;
-  margin: 0;
+  padding: 18px;
+  margin: 24px 16px;
   font-size: 13px;
-  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-bg-alt);
+}
+
+.empty-state strong {
+  color: var(--text-bright);
+}
+
+.empty-state-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.empty-state-actions button {
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  padding: 6px 10px;
+  cursor: pointer;
 }
 
 /* ---------- Range filter buttons ---------- */
@@ -658,6 +703,20 @@ thead th {
   cursor: pointer;
   user-select: none;
   z-index: 1;
+}
+
+th.pinned-column,
+td.pinned-column {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--panel-bg);
+  box-shadow: 1px 0 0 var(--border);
+}
+
+thead th.pinned-column {
+  z-index: 3;
+  background: var(--panel-bg-alt);
 }
 
 thead th.col-text {
