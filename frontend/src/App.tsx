@@ -460,12 +460,25 @@ function App() {
     getIndexes().then(setIndexes).catch(() => {});
   }, []);
 
+  const wakeRetries = useRef(0);
+  const MAX_WAKE_RETRIES = 15; // ~2 min, covers a Render free-tier cold start
+
   const runScreen = async (c: ScreenerCriteria) => {
     setLoading(true);
     setError(null);
     try {
       setResults(await screenStocks(c));
+      wakeRetries.current = 0;
     } catch (err) {
+      // A network error with no data yet usually means the free-tier backend is
+      // cold-starting -- keep retrying quietly instead of showing a dead page.
+      const isNetworkError = err instanceof TypeError;
+      if (isNetworkError && wakeRetries.current < MAX_WAKE_RETRIES) {
+        wakeRetries.current += 1;
+        setError("Backend is waking up (free hosting spins down when idle) — retrying…");
+        setTimeout(() => runScreen(c), 8000);
+        return; // keep the loading state visible while we wait
+      }
       setError(String(err));
     } finally {
       setLoading(false);
