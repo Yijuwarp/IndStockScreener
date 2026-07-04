@@ -112,15 +112,69 @@ type Column = {
   colorClass?: (s: Stock) => string;
 };
 
+// Monday of the current calendar week, as an ISO date string (matches the
+// backend's IST-calendar week convention closely enough for display flags).
+function currentWeekStartISO(): string {
+  const now = new Date();
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  return monday.toISOString().slice(0, 10);
+}
+const WEEK_START_ISO = currentWeekStartISO();
+
+const isNewAthThisWeek = (s: Stock) =>
+  s.all_time_high_date != null && s.all_time_high_date >= WEEK_START_ISO;
+
+type ScoreCriterion = { label: string; met: boolean | null };
+
+function scoreCriteria(s: Stock): ScoreCriterion[] {
+  const pct = (v: number | null) => (v == null ? "no data" : v.toFixed(1) + "%");
+  return [
+    {
+      label: `Tight base — range ${pct(s.consolidation_range_pct)} (want <15%)`,
+      met: s.consolidation_range_pct != null ? s.consolidation_range_pct < 15 : null,
+    },
+    {
+      label: `Proper base length — ${s.consolidation_weeks ?? "?"} wks (want ≥5)`,
+      met: s.consolidation_weeks != null ? s.consolidation_weeks >= 5 : null,
+    },
+    {
+      label: `Fresh breakout — ${s.breakout_age_weeks ?? "?"} wks old (want ≤4)`,
+      met: s.breakout_age_weeks != null ? s.breakout_age_weeks <= 4 : null,
+    },
+    {
+      label: `Strong breakout volume — ${s.breakout_volume_ratio != null ? s.breakout_volume_ratio.toFixed(1) + "x" : "no data"} (want ≥2x)`,
+      met: s.breakout_volume_ratio != null ? s.breakout_volume_ratio >= 2.0 : null,
+    },
+    {
+      label: "Volume dry-up before breakout",
+      met: s.volume_dry_up,
+    },
+    {
+      label: `Not extended — ${pct(s.extension_pct)} past breakout (want ≤10%)`,
+      met: s.extension_pct != null ? s.extension_pct <= 10 : null,
+    },
+    {
+      label: "Above 200D EMA (long-term uptrend)",
+      met: s.current_price != null && s.ema_200d != null ? s.current_price > s.ema_200d : null,
+    },
+    {
+      label: "Above 10W EMA (stoploss line intact)",
+      met: s.weekly_close != null && s.ema_10w != null ? s.weekly_close >= s.ema_10w : null,
+    },
+  ];
+}
+
+const SCORE_MAX = scoreCriteria({} as Stock).length;
+
 function scoreStock(s: Stock): number {
-  let n = 0;
-  if (s.consolidation_range_pct != null && s.consolidation_range_pct < 15) n++;
-  if (s.breakout_age_weeks != null && s.breakout_age_weeks <= 4) n++;
-  if (s.breakout_volume_ratio != null && s.breakout_volume_ratio >= 2.0) n++;
-  if (s.volume_dry_up === true) n++;
-  if (s.extension_pct != null && s.extension_pct <= 10) n++;
-  if (s.current_price != null && s.ema_200d != null && s.current_price > s.ema_200d) n++;
-  return n;
+  return scoreCriteria(s).filter((c) => c.met === true).length;
+}
+
+function scoreTooltip(s: Stock): string {
+  return scoreCriteria(s)
+    .map((c) => (c.met === true ? "✓ " : c.met === false ? "✗ " : "– ") + c.label)
+    .join("\n");
 }
 
 const COLUMNS: Column[] = [
@@ -161,6 +215,23 @@ const COLUMNS: Column[] = [
     numeric: false,
     render: (s) => (
       <span className="flags-cell">
+        {isNewAthThisWeek(s) && (
+          <span
+            className="flag-badge flag-ath"
+            title={`New all-time high this week (${s.all_time_high_date}). The course's primary buy signal.`}
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <path
+                d="M2 12.5L6 8.5L9 10.5L14 4.5 M14 4.5H10.5 M14 4.5V8"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        )}
         {s.circuit_trap && (
           <span
             className="flag-badge flag-trap"
@@ -214,7 +285,8 @@ const COLUMNS: Column[] = [
         )}
       </span>
     ),
-    value: (s) => (s.circuit_trap ? 1 : 0) + (s.exit_signal ? 1 : 0) + (s.pyramid_signal ? 1 : 0),
+    value: (s) =>
+      (isNewAthThisWeek(s) ? 1 : 0) + (s.circuit_trap ? 1 : 0) + (s.exit_signal ? 1 : 0) + (s.pyramid_signal ? 1 : 0),
   },
   { key: "exchange", label: "Exchange", numeric: false, render: (s) => s.exchange, value: (s) => s.exchange },
   { key: "name", label: "Name", numeric: false, render: (s) => s.name, value: (s) => s.name },
@@ -290,11 +362,15 @@ const COLUMNS: Column[] = [
     key: "score",
     label: "Score",
     numeric: true,
-    render: (s) => `${scoreStock(s)}/6`,
+    render: (s) => (
+      <span className="score-cell" title={scoreTooltip(s)}>
+        {scoreStock(s)}/{SCORE_MAX}
+      </span>
+    ),
     value: (s) => scoreStock(s),
     colorClass: (s) => {
       const sc = scoreStock(s);
-      return sc >= 5 ? "positive" : sc >= 3 ? "warning" : "";
+      return sc >= 6 ? "positive" : sc >= 4 ? "warning" : "";
     },
   },
   { key: "stock_age", label: "Stock Age", numeric: true, render: (s) => fmtAge(s.stock_age_days), value: (s) => s.stock_age_days },
@@ -374,7 +450,7 @@ const TOUR_STEPS: { title: string; body: string }[] = [
   },
   {
     title: "Read the results",
-    body: "Score (0–6) rates setup quality — sort by it. Trend dots show price vs 21/50/200-day averages (3 green = full uptrend). Flags warn you: red triangle = circuit-stock trap (avoid), amber door = below the 10-week stoploss line, green pyramid = add-on breakout this week. Hover any column header for an explanation.",
+    body: "Score (0–8) rates setup quality — hover a score to see exactly which criteria pass and fail, and sort by it. Trend dots show price vs 21/50/200-day averages (3 green = full uptrend). Flags: blue arrow = new all-time high this week (the buy signal), red triangle = circuit-stock trap (avoid), amber door = below the 10-week stoploss line, green pyramid = add-on breakout. Hover any column header or flag for an explanation.",
   },
   {
     title: "Build your watchlist",

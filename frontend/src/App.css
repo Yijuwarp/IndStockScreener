@@ -737,6 +737,12 @@ td.symbol {
   cursor: default;
 }
 
+.flag-ath {
+  color: var(--accent);
+  border-color: rgba(41, 98, 255, 0.4);
+  background: var(--accent-bg);
+}
+
 .flag-trap {
   color: var(--red);
   border-color: rgba(239, 83, 80, 0.4);
