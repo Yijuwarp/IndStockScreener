@@ -74,9 +74,7 @@ def check_and_refresh() -> None:
             except Exception:
                 pass  # no network / NSE archive down -- retry next startup
         oldest = _oldest_last_updated(db)
-        never_updated = (
-            db.query(Stock.id).filter(Stock.last_updated.is_(None)).first() is not None
-        )
+        never_updated_count = db.query(Stock).filter(Stock.last_updated.is_(None)).count()
     finally:
         db.close()
 
@@ -84,9 +82,11 @@ def check_and_refresh() -> None:
         status.data_as_of = oldest
 
     cutoff = most_recent_weekday(dt.date.today())
-    # Stocks with no last_updated at all (fresh deploy, or a refresh that died
-    # partway) are as stale as it gets -- oldest alone would miss them.
-    stale = oldest is None or oldest < cutoff or never_updated
+    # Many never-updated stocks means a fresh deploy or a refresh that died partway
+    # (oldest alone would miss them). A tolerance is needed because a handful of
+    # delisted/dud tickers never get data and would otherwise force a futile
+    # refresh on every startup.
+    stale = oldest is None or oldest < cutoff or never_updated_count > 25
 
     if not stale:
         return
