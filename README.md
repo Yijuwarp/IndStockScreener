@@ -32,6 +32,13 @@ npm run dev
 
 Visit http://localhost:5173, backend runs on http://localhost:8000.
 
+## Hosting notes
+- SQLite (`DATABASE_URL=sqlite:///./test.db`) is fine for local/single-user use. For multi-user
+  hosting switch to PostgreSQL (`DATABASE_URL=postgresql+psycopg://...`) — SQLite allows only one
+  writer, and the daily refresh job is a long-running writer that will contend with user requests.
+- Responses are gzip-compressed and the screen endpoint reads only the denormalized `stocks`
+  table, so a small VPS (1-2 vCPU) handles dozens of concurrent users.
+
 ## Next steps
 - Schedule `run_ingestion` to run daily (e.g. via APScheduler or a cron job).
 - Add more screener criteria (P/E, sector, RSI, moving averages, etc.).
