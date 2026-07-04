@@ -434,11 +434,26 @@ function App() {
     });
   };
 
+  // Poll fast only while a refresh is in flight; idle polling is just a heartbeat.
   useEffect(() => {
-    const poll = () => getStatus().then(setStatus).catch(() => {});
+    let timer: number | undefined;
+    let cancelled = false;
+    const poll = () => {
+      getStatus()
+        .then((st) => {
+          if (cancelled) return;
+          setStatus(st);
+          timer = window.setTimeout(poll, st.refreshing ? 5000 : 30000);
+        })
+        .catch(() => {
+          if (!cancelled) timer = window.setTimeout(poll, 30000);
+        });
+    };
     poll();
-    const interval = setInterval(poll, 5000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => {
