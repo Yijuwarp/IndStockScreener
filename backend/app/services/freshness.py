@@ -61,10 +61,18 @@ def _run_refresh():
 
 
 def check_and_refresh() -> None:
-    """Call on startup. Updates status.data_as_of and kicks off a background
-    refresh if data is older than the most recent weekday."""
+    """Call on startup. Seeds the stock universe if the table is empty (fresh cloud
+    deploy with no shell access), updates status.data_as_of, and kicks off a
+    background refresh if data is older than the most recent weekday."""
     db = SessionLocal()
     try:
+        if db.query(Stock.id).first() is None:
+            from scripts.seed_stocks import seed_nse
+
+            try:
+                seed_nse(db)
+            except Exception:
+                pass  # no network / NSE archive down -- retry next startup
         oldest = _oldest_last_updated(db)
     finally:
         db.close()
