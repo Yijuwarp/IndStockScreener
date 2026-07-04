@@ -48,34 +48,56 @@ def recompute_cap_categories(db: Session) -> None:
     db.commit()
 
 
-def _upsert_weekly_prices(db: Session, stock: Stock, hist: pd.DataFrame) -> None:
-    """Aggregate daily history into Monday-anchored weekly bars."""
-    df = hist.copy()
-    df["week_start"] = df.index.to_series().apply(lambda d: (d - dt.timedelta(days=d.weekday())).date())
+def _load_daily_df(db: Session, stock: Stock) -> pd.DataFrame:
+    """The stock's stored daily bars as a DataFrame -- the single source of truth
+    for snapshot metrics, so a fetch window can be as small as a few weeks."""
+    rows = (
+        db.query(
+            DailyPrice.date, DailyPrice.open, DailyPrice.high,
+            DailyPrice.low, DailyPrice.close, DailyPrice.volume,
+        )
+        .filter(DailyPrice.stock_id == stock.id)
+        .order_by(DailyPrice.date.asc())
+        .all()
+    )
+    return pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "volume"])
+
+
+def _rebuild_weekly_from_daily(
+    db: Session, stock: Stock, daily_df: pd.DataFrame, since_week: dt.date | None = None
+) -> None:
+    """Aggregate stored daily bars into Monday-anchored weekly bars. When since_week
+    is given, only weeks from that Monday onward are rebuilt (incremental refresh)."""
+    df = daily_df.copy()
+    df["week_start"] = df["date"].apply(lambda d: d - dt.timedelta(days=d.weekday()))
+    if since_week is not None:
+        df = df[df["week_start"] >= since_week]
+    if df.empty:
+        return
 
     weekly = df.groupby("week_start").agg(
-        open=("Open", "first"),
-        high=("High", "max"),
-        low=("Low", "min"),
-        close=("Close", "last"),
-        volume=("Volume", "sum"),
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+        volume=("volume", "sum"),
     )
 
-    existing = {
-        wp.week_start: wp
-        for wp in db.query(WeeklyPrice).filter(WeeklyPrice.stock_id == stock.id).all()
-    }
+    query = db.query(WeeklyPrice).filter(WeeklyPrice.stock_id == stock.id)
+    if since_week is not None:
+        query = query.filter(WeeklyPrice.week_start >= since_week)
+    existing = {wp.week_start: wp for wp in query.all()}
 
     for week_start, row in weekly.iterrows():
         wp = existing.get(week_start)
         if wp is None:
             wp = WeeklyPrice(stock_id=stock.id, week_start=week_start)
             db.add(wp)
-        wp.open = float(row["open"])
-        wp.high = float(row["high"])
-        wp.low = float(row["low"])
-        wp.close = float(row["close"])
-        wp.volume = int(row["volume"])
+        wp.open = None if pd.isna(row["open"]) else float(row["open"])
+        wp.high = None if pd.isna(row["high"]) else float(row["high"])
+        wp.low = None if pd.isna(row["low"]) else float(row["low"])
+        wp.close = None if pd.isna(row["close"]) else float(row["close"])
+        wp.volume = None if pd.isna(row["volume"]) else int(row["volume"])
 
 
 def _detect_circuit_trap(weekly_rows: list[WeeklyPrice]) -> tuple[bool, int]:
@@ -205,14 +227,16 @@ def _upsert_breakout_metrics(db: Session, stock: Stock, basis: str, weekly_rows:
 BATCH_CHUNK_SIZE = 30  # modest: each chunk's full-history download must fit in a 512MB instance
 
 
-def fetch_history_batch(tickers: list[str], chunk_size: int = BATCH_CHUNK_SIZE) -> dict[str, pd.DataFrame]:
-    """Batch-fetch full history for many tickers via yf.download(), chunked to stay
+def fetch_history_batch(
+    tickers: list[str], chunk_size: int = BATCH_CHUNK_SIZE, period: str = "max"
+) -> dict[str, pd.DataFrame]:
+    """Batch-fetch history for many tickers via yf.download(), chunked to stay
     within Yahoo's per-request limits. Returns only tickers with non-empty history."""
     results: dict[str, pd.DataFrame] = {}
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i + chunk_size]
         data = yf.download(
-            chunk, period="max", auto_adjust=True, group_by="ticker", threads=True, progress=False
+            chunk, period=period, auto_adjust=True, group_by="ticker", threads=True, progress=False
         )
         for ticker in chunk:
             if ticker not in data.columns.get_level_values(0):
@@ -224,12 +248,46 @@ def fetch_history_batch(tickers: list[str], chunk_size: int = BATCH_CHUNK_SIZE) 
     return results
 
 
-def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = None) -> None:
-    """Refresh cached snapshot fields for a stock from a fetched price history.
+# Incremental refresh: window fetched for stocks that already have history, and the
+# relative price divergence on overlapping days that signals a split/bonus
+# back-adjustment (=> that stock needs a full-history refetch).
+INCREMENTAL_PERIOD = "1mo"
+ADJUSTMENT_TOLERANCE = 0.01
+OVERLAP_CHECK_DAYS = 5
 
-    If `hist` is not provided, fetches it for this single ticker (used for one-off
-    refreshes). Batch refreshes should fetch history via `fetch_history_batch` and
-    pass it in directly to avoid one yfinance call per ticker.
+
+def _detect_back_adjustment(db: Session, stock: Stock, hist: pd.DataFrame, last_date: dt.date) -> bool:
+    """True when fetched closes disagree with stored closes on days we already have --
+    Yahoo back-adjusts the whole series after a split/bonus, so any divergence means
+    every stored bar is stale."""
+    overlap = hist[[d.date() <= last_date for d in hist.index]].tail(OVERLAP_CHECK_DAYS)
+    if overlap.empty:
+        return False
+    dates = [d.date() for d in overlap.index]
+    stored = dict(
+        db.query(DailyPrice.date, DailyPrice.close)
+        .filter(DailyPrice.stock_id == stock.id, DailyPrice.date.in_(dates))
+        .all()
+    )
+    for idx, row in overlap.iterrows():
+        fetched_close = row.get("Close")
+        stored_close = stored.get(idx.date())
+        if fetched_close is None or pd.isna(fetched_close) or not stored_close:
+            continue
+        if abs(fetched_close - stored_close) / stored_close > ADJUSTMENT_TOLERANCE:
+            return True
+    return False
+
+
+def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = None) -> None:
+    """Refresh a stock from a fetched price history window and recompute its cached
+    snapshot fields from the stored daily bars.
+
+    `hist` may be a short incremental window (INCREMENTAL_PERIOD) or full history --
+    all metrics are computed from the DB, so the window only determines which new
+    daily bars get appended. If fetched prices disagree with stored ones on
+    overlapping days (split/bonus back-adjustment), the stock's stored history is
+    wiped and refetched in full.
     """
     if hist is None:
         single = fetch_history_batch([stock.yf_ticker], chunk_size=1)
@@ -241,16 +299,27 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
     # which detaches the Stock instances they're iterating.
     stock = db.merge(stock)
 
-    # Daily bars are append-only, so only insert past the latest stored date instead
-    # of loading the stock's full date history to dedupe against.
     last_date = (
         db.query(sa_func.max(DailyPrice.date)).filter(DailyPrice.stock_id == stock.id).scalar()
     )
 
+    if last_date is not None and _detect_back_adjustment(db, stock, hist, last_date):
+        full = fetch_history_batch([stock.yf_ticker], chunk_size=1, period="max")
+        full_hist = full.get(stock.yf_ticker)
+        if full_hist is None or full_hist.empty:
+            return  # can't rebuild safely now; leave stored data for the next run
+        db.query(DailyPrice).filter(DailyPrice.stock_id == stock.id).delete()
+        db.query(WeeklyPrice).filter(WeeklyPrice.stock_id == stock.id).delete()
+        db.flush()
+        hist = full_hist
+        last_date = None
+
+    new_dates = []
     for idx, row in hist.iterrows():
         date = idx.date()
         if last_date is not None and date <= last_date:
             continue
+        new_dates.append(date)
         db.add(
             DailyPrice(
                 stock_id=stock.id,
@@ -262,13 +331,23 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
                 volume=row.get("Volume"),
             )
         )
-
-    _upsert_weekly_prices(db, stock, hist)
     db.flush()
 
-    all_time_high_row = hist["High"].idxmax()
-    week_52 = hist[hist.index >= hist.index.max() - dt.timedelta(days=365)]
-    week_52_high_row = week_52["High"].idxmax()
+    daily_df = _load_daily_df(db, stock)
+    if daily_df.empty:
+        return
+
+    # Rebuild weekly bars from the Monday of the earliest new day (everything, when
+    # history was just wiped or the stock is new).
+    if last_date is None:
+        since_week = None
+    elif new_dates:
+        first_new = min(new_dates)
+        since_week = first_new - dt.timedelta(days=first_new.weekday())
+    else:
+        since_week = last_date - dt.timedelta(days=last_date.weekday())  # refresh current week only
+    _rebuild_weekly_from_daily(db, stock, daily_df, since_week=since_week)
+    db.flush()
 
     ticker = yf.Ticker(stock.yf_ticker)
     # .get_info() carries market cap plus the informational fundamentals in the same
@@ -278,8 +357,16 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
     except Exception:
         info = {}
 
-    stock.current_price = float(hist["Close"].iloc[-1])
-    stock.current_volume = int(hist["Volume"].iloc[-1])
+    closes = daily_df["close"].dropna()
+    highs = daily_df["high"].dropna()
+    ath_idx = highs.idxmax()
+    max_date = daily_df["date"].iloc[-1]
+    week_52 = daily_df[daily_df["date"] >= max_date - dt.timedelta(days=365)]
+    w52_idx = week_52["high"].dropna().idxmax()
+
+    stock.current_price = float(closes.iloc[-1]) if not closes.empty else None
+    last_vol = daily_df["volume"].iloc[-1]
+    stock.current_volume = int(last_vol) if pd.notna(last_vol) else None
     stock.market_cap = info.get("marketCap")
     if stock.market_cap is None:
         stock.market_cap = getattr(ticker.fast_info, "market_cap", None)
@@ -289,15 +376,15 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
     earnings_growth = info.get("earningsQuarterlyGrowth")
     stock.revenue_growth = revenue_growth * 100 if revenue_growth is not None else None
     stock.earnings_growth = earnings_growth * 100 if earnings_growth is not None else None
-    stock.all_time_high = float(hist.loc[all_time_high_row, "High"])
-    stock.all_time_high_date = all_time_high_row.date()
-    stock.week_52_high = float(week_52.loc[week_52_high_row, "High"])
-    stock.week_52_high_date = week_52_high_row.date()
+    stock.all_time_high = float(daily_df["high"].loc[ath_idx])
+    stock.all_time_high_date = daily_df["date"].loc[ath_idx]
+    stock.week_52_high = float(week_52["high"].loc[w52_idx])
+    stock.week_52_high_date = week_52["date"].loc[w52_idx]
     stock.last_updated = dt.date.today()
-    stock.listing_date = hist.index.min().date()
-    stock.ema_21d = _ema(hist["Close"], 21)
-    stock.ema_50d = _ema(hist["Close"], 50)
-    stock.ema_200d = _ema(hist["Close"], 200)
+    stock.listing_date = daily_df["date"].iloc[0]
+    stock.ema_21d = _ema(closes, 21)
+    stock.ema_50d = _ema(closes, 50)
+    stock.ema_200d = _ema(closes, 200)
 
     weekly_rows = (
         db.query(WeeklyPrice)
@@ -333,21 +420,33 @@ def batch_upsert_stock_history(db: Session, stocks: list[Stock], chunk_size: int
     universe's history up front) so peak memory stays flat regardless of universe
     size -- the full-universe prefetch OOM'd Render's 512MB free tier.
 
+    Stocks that already have history get a short incremental window
+    (INCREMENTAL_PERIOD); never-ingested stocks get full history. Split/bonus
+    back-adjustments are detected per stock and trigger a full refetch for just
+    that stock (see upsert_stock_history).
+
     Yields (stock, error) for each input stock as it's processed, so callers can
     report progress the same way they did with a per-ticker loop. error is None
     on success.
     """
-    for i in range(0, len(stocks), chunk_size):
-        chunk = stocks[i:i + chunk_size]
-        history_by_ticker = fetch_history_batch([s.yf_ticker for s in chunk], chunk_size=chunk_size)
-        for stock in chunk:
-            try:
-                upsert_stock_history(db, stock, hist=history_by_ticker.get(stock.yf_ticker))
-                yield stock, None
-            except Exception as exc:
-                yield stock, exc
-            finally:
-                # Drop flushed ORM objects (thousands of DailyPrice rows per stock)
-                # from the identity map so the session doesn't grow unboundedly.
-                db.expunge_all()
-        del history_by_ticker
+    full_fetch = [s for s in stocks if s.last_updated is None]
+    incremental = [s for s in stocks if s.last_updated is not None]
+    groups = [(full_fetch, "max"), (incremental, INCREMENTAL_PERIOD)]
+
+    for group, period in groups:
+        for i in range(0, len(group), chunk_size):
+            chunk = group[i:i + chunk_size]
+            history_by_ticker = fetch_history_batch(
+                [s.yf_ticker for s in chunk], chunk_size=chunk_size, period=period
+            )
+            for stock in chunk:
+                try:
+                    upsert_stock_history(db, stock, hist=history_by_ticker.get(stock.yf_ticker))
+                    yield stock, None
+                except Exception as exc:
+                    yield stock, exc
+                finally:
+                    # Drop flushed ORM objects (thousands of DailyPrice rows per stock)
+                    # from the identity map so the session doesn't grow unboundedly.
+                    db.expunge_all()
+            del history_by_ticker
