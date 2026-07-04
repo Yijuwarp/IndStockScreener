@@ -202,7 +202,7 @@ def _upsert_breakout_metrics(db: Session, stock: Stock, basis: str, weekly_rows:
         bm.volume_dry_up = None
 
 
-BATCH_CHUNK_SIZE = 75
+BATCH_CHUNK_SIZE = 30  # modest: each chunk's full-history download must fit in a 512MB instance
 
 
 def fetch_history_batch(tickers: list[str], chunk_size: int = BATCH_CHUNK_SIZE) -> dict[str, pd.DataFrame]:
@@ -236,6 +236,10 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
         hist = single.get(stock.yf_ticker)
     if hist is None or hist.empty:
         return
+
+    # Re-attach: batch callers expunge the session between stocks to cap memory,
+    # which detaches the Stock instances they're iterating.
+    stock = db.merge(stock)
 
     # Daily bars are append-only, so only insert past the latest stored date instead
     # of loading the stock's full date history to dedupe against.
@@ -325,14 +329,25 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
 def batch_upsert_stock_history(db: Session, stocks: list[Stock], chunk_size: int = BATCH_CHUNK_SIZE):
     """Refresh history for many stocks at once, batching the yfinance fetch.
 
+    Fetches and processes one chunk at a time (rather than downloading the whole
+    universe's history up front) so peak memory stays flat regardless of universe
+    size -- the full-universe prefetch OOM'd Render's 512MB free tier.
+
     Yields (stock, error) for each input stock as it's processed, so callers can
     report progress the same way they did with a per-ticker loop. error is None
     on success.
     """
-    history_by_ticker = fetch_history_batch([s.yf_ticker for s in stocks], chunk_size=chunk_size)
-    for stock in stocks:
-        try:
-            upsert_stock_history(db, stock, hist=history_by_ticker.get(stock.yf_ticker))
-            yield stock, None
-        except Exception as exc:
-            yield stock, exc
+    for i in range(0, len(stocks), chunk_size):
+        chunk = stocks[i:i + chunk_size]
+        history_by_ticker = fetch_history_batch([s.yf_ticker for s in chunk], chunk_size=chunk_size)
+        for stock in chunk:
+            try:
+                upsert_stock_history(db, stock, hist=history_by_ticker.get(stock.yf_ticker))
+                yield stock, None
+            except Exception as exc:
+                yield stock, exc
+            finally:
+                # Drop flushed ORM objects (thousands of DailyPrice rows per stock)
+                # from the identity map so the session doesn't grow unboundedly.
+                db.expunge_all()
+        del history_by_ticker
