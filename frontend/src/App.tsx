@@ -353,6 +353,39 @@ function reorderColumns(prev: string[], fromKey: string, toKey: string): string[
   return next;
 }
 
+const TOUR_DONE_COOKIE = "iss_tour_done";
+
+const TOUR_STEPS: { title: string; body: string }[] = [
+  {
+    title: "Welcome to Momentum Stock Screener",
+    body: "This app screens NSE stocks for momentum breakout setups using price action and volume — stocks making new highs after consolidating, on strong volume. No fundamental noise, just the setups.",
+  },
+  {
+    title: "Check the market first",
+    body: "The banner at the top shows the market regime: green \"Buy zone\" means NIFTY 50 is above its 40-week average and new buys are OK; red \"No-buy zone\" means step back and wait. Open Index Check-in for the detailed index picture.",
+  },
+  {
+    title: "Pick your breakout basis",
+    body: "All-Time High mode finds stocks breaking out to fresh all-time highs (the strongest signal). 52-Week High mode is looser — stocks at yearly highs, where the \"Resistance\" filter tells you if an old higher high still looms overhead.",
+  },
+  {
+    title: "Filters & presets",
+    body: "The filter chips come preloaded with sensible course defaults (min ₹1,000 Cr market cap, 1.5x breakout volume, and more). Click any chip to adjust. The Presets row gives one-click setups: \"Fresh breakout\" for recent moves, \"Tight base\" for coiled consolidations.",
+  },
+  {
+    title: "Read the results",
+    body: "Score (0–6) rates setup quality — sort by it. Trend dots show price vs 21/50/200-day averages (3 green = full uptrend). Flags warn you: red triangle = circuit-stock trap (avoid), amber door = below the 10-week stoploss line, green pyramid = add-on breakout this week. Hover any column header for an explanation.",
+  },
+  {
+    title: "Build your watchlist",
+    body: "Click + next to any symbol to pin it to your watchlist — it stays visible at the top regardless of filters, so you can track your holdings and candidates. The chart icon opens the stock on TradingView.",
+  },
+  {
+    title: "Data freshness",
+    body: "Price data refreshes automatically on weekdays; \"Data as of\" in the top bar shows the current state. That's it — happy screening!",
+  },
+];
+
 const PRESETS: { label: string; criteria: ScreenerCriteria }[] = [
   { label: "Course defaults", criteria: DEFAULT_CRITERIA },
   { label: "Fresh breakout", criteria: { ...DEFAULT_CRITERIA, max_breakout_age_weeks: 4, min_breakout_volume_ratio: 2.0 } },
@@ -385,6 +418,15 @@ function App() {
   });
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: "weekly_pct_change", dir: -1 });
+  const [tourStep, setTourStep] = useState<number | null>(() =>
+    getJSONCookie<boolean>(TOUR_DONE_COOKIE, false) ? null : 0
+  );
+
+  const closeTour = () => {
+    setJSONCookie(TOUR_DONE_COOKIE, true);
+    setTourStep(null);
+  };
+
   const [watchlist, setWatchlist] = useState<string[]>(() => getJSONCookie(WATCHLIST_COOKIE, []));
   const [watchlistRows, setWatchlistRows] = useState<Stock[]>([]);
   const [watchlistOpen, setWatchlistOpen] = useState(true);
@@ -810,7 +852,7 @@ function App() {
   return (
     <div className="screener">
       <div className="topbar">
-        <h1>IndStockScreener</h1>
+        <h1>Momentum Stock Screener</h1>
         <div className="basis-toggle">
           <button className={criteria.basis !== "52W" ? "active" : ""} onClick={() => handleBasisChange("ATH")}>
             All-Time High
@@ -834,6 +876,14 @@ function App() {
             {marketRegime === "buy" ? "● Market: Buy zone" : "● Market: No-buy zone"}
           </span>
         )}
+        <button
+          type="button"
+          className="index-panel-toggle"
+          title="Replay the intro tour"
+          onClick={() => setTourStep(0)}
+        >
+          ? Tour
+        </button>
         {status && (
           <span className={"data-status" + (status.refreshing ? " refreshing" : "")}>
             Data as of: {status.data_as_of ?? "never"}
@@ -899,7 +949,10 @@ function App() {
             </button>
           );
         })()}
-        <div className="filter-separator" aria-hidden="true" />
+      </form>
+
+      <div className="presets-row">
+        <span className="presets-label">Presets:</span>
         {PRESETS.map((p) => (
           <button
             key={p.label}
@@ -910,7 +963,7 @@ function App() {
             {p.label}
           </button>
         ))}
-      </form>
+      </div>
 
       <div className="screen-row">
         <button type="button" className="screen-button" disabled={loading} onClick={() => runScreen(criteria)}>
@@ -1000,6 +1053,39 @@ function App() {
           <tbody>{displayedResults.map(renderRow)}</tbody>
         </table>
       </div>
+
+      {tourStep !== null && (
+        <div className="tour-overlay" onClick={closeTour}>
+          <div className="tour-card" onClick={(e) => e.stopPropagation()}>
+            <div className="tour-progress">
+              {tourStep + 1} / {TOUR_STEPS.length}
+            </div>
+            <h2>{TOUR_STEPS[tourStep].title}</h2>
+            <p>{TOUR_STEPS[tourStep].body}</p>
+            <div className="tour-actions">
+              <button type="button" className="tour-skip" onClick={closeTour}>
+                Skip
+              </button>
+              <div className="tour-nav">
+                {tourStep > 0 && (
+                  <button type="button" className="tour-back" onClick={() => setTourStep(tourStep - 1)}>
+                    Back
+                  </button>
+                )}
+                {tourStep < TOUR_STEPS.length - 1 ? (
+                  <button type="button" className="tour-next" onClick={() => setTourStep(tourStep + 1)}>
+                    Next
+                  </button>
+                ) : (
+                  <button type="button" className="tour-next" onClick={closeTour}>
+                    Done
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

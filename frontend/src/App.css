@@ -144,6 +144,95 @@
   border-color: var(--accent);
 }
 
+.presets-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.presets-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+}
+
+/* ---------- Tour ---------- */
+
+.tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tour-card {
+  background: var(--panel-bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+  padding: 20px 24px;
+  max-width: 440px;
+  width: calc(100% - 48px);
+  color: var(--text);
+}
+
+.tour-progress {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.tour-card h2 {
+  font-size: 15px;
+  color: var(--text-bright);
+  margin: 0 0 8px;
+}
+
+.tour-card p {
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0 0 16px;
+}
+
+.tour-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.tour-nav {
+  display: flex;
+  gap: 8px;
+}
+
+.tour-skip,
+.tour-back {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tour-next {
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  padding: 6px 18px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .screen-row {
   display: flex;
   justify-content: flex-start;

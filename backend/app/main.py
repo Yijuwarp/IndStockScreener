@@ -9,7 +9,7 @@ from app.db.session import Base, engine
 from app.routers import stocks, indexes
 from app.services.freshness import check_and_refresh, status
 
-app = FastAPI(title="IndStockScreener API")
+app = FastAPI(title="Momentum Stock Screener API")
 
 _cors_origins = os.environ.get("CORS_ORIGINS", "*").split(",")
 
