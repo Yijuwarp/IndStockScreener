@@ -581,6 +581,19 @@ function App() {
   const sortedResults = useMemo(() => sortRows(results, sort), [results, sort]);
   const sortedWatchlist = useMemo(() => sortRows(watchlistRows, sort), [watchlistRows, sort]);
 
+  // Full universe, fetched lazily on first search and cached per basis, so search
+  // can also surface stocks that the current filters exclude.
+  const [allStocks, setAllStocks] = useState<{ basis: string; rows: Stock[] } | null>(null);
+  useEffect(() => {
+    if (!searchQuery.trim()) return;
+    const basis = criteria.basis ?? "ATH";
+    if (allStocks && allStocks.basis === basis) return;
+    screenStocks({ basis })
+      .then((rows) => setAllStocks({ basis, rows }))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, criteria.basis]);
+
   const isAth = criteria.basis !== "52W";
 
   // Course market-regime rule: stop buying while NIFTY closes below its 40-week EMA
@@ -593,13 +606,25 @@ function App() {
         : "nobuy"
       : null;
 
+  const matchesQuery = (s: Stock, q: string) =>
+    s.symbol.toLowerCase().includes(q) || (s.name ?? "").toLowerCase().includes(q);
+
   const displayedResults = useMemo(() => {
     if (!searchQuery.trim()) return sortedResults;
     const q = searchQuery.trim().toLowerCase();
-    return sortedResults.filter(
-      (s) => s.symbol.toLowerCase().includes(q) || (s.name ?? "").toLowerCase().includes(q)
-    );
+    return sortedResults.filter((s) => matchesQuery(s, q));
   }, [sortedResults, searchQuery]);
+
+  // Search hits outside the current filter set, shown in their own section.
+  const outsideMatches = useMemo(() => {
+    if (!searchQuery.trim() || !allStocks) return [];
+    const q = searchQuery.trim().toLowerCase();
+    const screenedIds = new Set(results.map((s) => s.id));
+    return sortRows(
+      allStocks.rows.filter((s) => !screenedIds.has(s.id) && matchesQuery(s, q)),
+      sort
+    );
+  }, [searchQuery, allStocks, results, sort]);
 
   type FilterBlock = { key: string; group: Group; node: React.ReactNode };
 
@@ -999,7 +1024,9 @@ function App() {
 
       <div className="table-toolbar">
         <span className="result-count">
-          {displayedResults.length}{searchQuery.trim() ? ` of ${sortedResults.length}` : ""} results
+          {searchQuery.trim()
+            ? `${displayedResults.length} in filters + ${allStocks ? outsideMatches.length : "…"} outside`
+            : `${displayedResults.length} results`}
         </span>
         <input
           className="search-input"
@@ -1050,7 +1077,41 @@ function App() {
       <div className="table-wrap">
         <table>
           <thead>{headerRow}</thead>
-          <tbody>{displayedResults.map(renderRow)}</tbody>
+          <tbody>
+            {searchQuery.trim() ? (
+              <>
+                <tr className="section-row">
+                  <td colSpan={orderedVisibleColumns.length + 1}>
+                    Matching current filters ({displayedResults.length})
+                  </td>
+                </tr>
+                {displayedResults.map(renderRow)}
+                {displayedResults.length === 0 && (
+                  <tr className="section-empty-row">
+                    <td colSpan={orderedVisibleColumns.length + 1}>No matches in the filtered results.</td>
+                  </tr>
+                )}
+                <tr className="section-row section-row-outside">
+                  <td colSpan={orderedVisibleColumns.length + 1}>
+                    Other stocks — outside current filters ({allStocks ? outsideMatches.length : "…"})
+                  </td>
+                </tr>
+                {!allStocks && (
+                  <tr className="section-empty-row">
+                    <td colSpan={orderedVisibleColumns.length + 1}>Loading all stocks…</td>
+                  </tr>
+                )}
+                {allStocks && outsideMatches.length === 0 && (
+                  <tr className="section-empty-row">
+                    <td colSpan={orderedVisibleColumns.length + 1}>No other matches.</td>
+                  </tr>
+                )}
+                {outsideMatches.map(renderRow)}
+              </>
+            ) : (
+              displayedResults.map(renderRow)
+            )}
+          </tbody>
         </table>
       </div>
 

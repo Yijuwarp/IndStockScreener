@@ -783,6 +783,33 @@ td.symbol {
     inset 0 -1px 0 rgba(255, 255, 255, 0.05);
 }
 
+/* ---------- Search sections ---------- */
+
+.section-row td {
+  position: sticky;
+  background: var(--panel-bg-alt);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: left;
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.section-row-outside td {
+  color: var(--text-dim);
+}
+
+.section-empty-row td {
+  text-align: left;
+  font-family: inherit;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 td.positive {
   color: var(--green);
 }
