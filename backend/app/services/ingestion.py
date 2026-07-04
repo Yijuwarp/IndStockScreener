@@ -444,6 +444,9 @@ def batch_upsert_stock_history(db: Session, stocks: list[Stock], chunk_size: int
                     upsert_stock_history(db, stock, hist=history_by_ticker.get(stock.yf_ticker))
                     yield stock, None
                 except Exception as exc:
+                    # Roll back the failed transaction so one bad stock doesn't
+                    # poison the session for every stock after it.
+                    db.rollback()
                     yield stock, exc
                 finally:
                     # Drop flushed ORM objects (thousands of DailyPrice rows per stock)
