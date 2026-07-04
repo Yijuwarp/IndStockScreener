@@ -74,6 +74,9 @@ def check_and_refresh() -> None:
             except Exception:
                 pass  # no network / NSE archive down -- retry next startup
         oldest = _oldest_last_updated(db)
+        never_updated = (
+            db.query(Stock.id).filter(Stock.last_updated.is_(None)).first() is not None
+        )
     finally:
         db.close()
 
@@ -81,7 +84,9 @@ def check_and_refresh() -> None:
         status.data_as_of = oldest
 
     cutoff = most_recent_weekday(dt.date.today())
-    stale = oldest is None or oldest < cutoff
+    # Stocks with no last_updated at all (fresh deploy, or a refresh that died
+    # partway) are as stale as it gets -- oldest alone would miss them.
+    stale = oldest is None or oldest < cutoff or never_updated
 
     if not stale:
         return
