@@ -9,6 +9,7 @@
   --accent-bg: rgba(41, 98, 255, 0.12);
   --green: #26a69a;
   --red: #ef5350;
+  --amber: #f9a825;
   --row-hover: #1e222d;
 
   background: var(--panel-bg);
@@ -67,6 +68,27 @@
   background: var(--accent-bg);
   color: var(--accent);
   font-weight: 600;
+}
+
+.market-regime {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 4px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.market-regime.buy {
+  color: var(--green);
+  background: rgba(38, 166, 154, 0.12);
+  border: 1px solid rgba(38, 166, 154, 0.4);
+}
+
+.market-regime.nobuy {
+  color: var(--red);
+  background: rgba(239, 83, 80, 0.12);
+  border: 1px solid rgba(239, 83, 80, 0.4);
 }
 
 .data-status {
@@ -476,6 +498,58 @@
   min-height: 0;
 }
 
+/* ---------- Watchlist ---------- */
+
+.watchlist-section {
+  border-bottom: 1px solid var(--border);
+}
+
+.watchlist-header {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--panel-bg-alt);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+.watchlist-wrap {
+  flex: none;
+  max-height: 240px;
+  padding-bottom: 0;
+}
+
+.watch-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--panel-bg-alt);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.watch-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.watch-button.watched:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -557,6 +631,41 @@ td.symbol {
   gap: 5px;
 }
 
+.flags-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.flag-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid;
+  cursor: default;
+}
+
+.flag-trap {
+  color: var(--red);
+  border-color: rgba(239, 83, 80, 0.4);
+  background: rgba(239, 83, 80, 0.12);
+}
+
+.flag-exit {
+  color: var(--amber);
+  border-color: rgba(249, 168, 37, 0.4);
+  background: rgba(249, 168, 37, 0.12);
+}
+
+.flag-pyramid {
+  color: var(--green);
+  border-color: rgba(38, 166, 154, 0.4);
+  background: rgba(38, 166, 154, 0.12);
+}
+
 .chart-link {
   display: inline-flex;
   align-items: center;
@@ -591,4 +700,17 @@ td.positive {
 
 td.negative {
   color: var(--red);
+}
+
+td.warning {
+  color: var(--amber);
+}
+
+.filter-separator {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  margin: 0 4px;
+  align-self: center;
+  flex-shrink: 0;
 }

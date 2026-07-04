@@ -30,8 +30,17 @@ export interface Stock {
   ema_21d: number | null;
   ema_50d: number | null;
   ema_200d: number | null;
+  ema_10w: number | null;
   has_resistance: boolean | null;
   volume_dry_up: boolean | null;
+  sector: string | null;
+  industry: string | null;
+  revenue_growth: number | null;
+  earnings_growth: number | null;
+  circuit_trap: boolean | null;
+  circuit_trap_weeks: number | null;
+  exit_signal: boolean | null;
+  pyramid_signal: boolean | null;
 }
 
 export interface MarketIndex {
@@ -52,6 +61,7 @@ export interface RefreshStatus {
 }
 
 export interface ScreenerCriteria {
+  symbols?: string[];
   exchange?: string;
   min_market_cap?: number;
   max_market_cap?: number;

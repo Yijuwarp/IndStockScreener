@@ -2,6 +2,7 @@ import datetime as dt
 
 import pandas as pd
 import yfinance as yf
+from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
 from app.models.stock import Stock, DailyPrice, WeeklyPrice, BreakoutMetrics
@@ -13,6 +14,14 @@ MID_CAP_RANK = 250  # next 150 (rank 101-250)
 DRY_UP_RECENT_WEEKS = 3
 DRY_UP_BASELINE_WEEKS = 10
 DRY_UP_THRESHOLD = 0.7  # recent 3wk avg volume must be below 70% of trailing 10wk avg
+
+# Circuit-stock trap ("non-stop 5% circuits with volumes in hundreds or thousands"):
+# consecutive weeks each gaining ~5% (a daily 5% circuit compounds to ~4-6%/wk when
+# only a day or two hits the circuit) on negligible volume.
+CIRCUIT_GAIN_MIN_PCT = 4.0
+CIRCUIT_GAIN_MAX_PCT = 6.0
+CIRCUIT_MIN_RUN_WEEKS = 4
+CIRCUIT_MAX_AVG_WEEKLY_VOLUME = 50_000
 
 
 def _ema(series: pd.Series, span: int) -> float | None:
@@ -67,6 +76,29 @@ def _upsert_weekly_prices(db: Session, stock: Stock, hist: pd.DataFrame) -> None
         wp.low = float(row["low"])
         wp.close = float(row["close"])
         wp.volume = int(row["volume"])
+
+
+def _detect_circuit_trap(weekly_rows: list[WeeklyPrice]) -> tuple[bool, int]:
+    """Count the consecutive most-recent weeks that each gained ~5%; trap if the run
+    is long enough and traded on negligible volume. Returns (is_trap, run_length)."""
+    run = 0
+    volumes: list[int] = []
+    for i in range(len(weekly_rows) - 1, 0, -1):
+        cur, prev = weekly_rows[i], weekly_rows[i - 1]
+        if not cur.close or not prev.close:
+            break
+        gain_pct = (cur.close - prev.close) / prev.close * 100
+        if CIRCUIT_GAIN_MIN_PCT <= gain_pct <= CIRCUIT_GAIN_MAX_PCT:
+            run += 1
+            volumes.append(cur.volume or 0)
+        else:
+            break
+    is_trap = (
+        run >= CIRCUIT_MIN_RUN_WEEKS
+        and bool(volumes)
+        and sum(volumes) / len(volumes) < CIRCUIT_MAX_AVG_WEEKLY_VOLUME
+    )
+    return is_trap, run
 
 
 def _update_avg_weekly_volume(stock: Stock, weekly_rows: list[WeeklyPrice]) -> None:
@@ -205,13 +237,15 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
     if hist is None or hist.empty:
         return
 
-    existing_dates = {
-        d for (d,) in db.query(DailyPrice.date).filter(DailyPrice.stock_id == stock.id).all()
-    }
+    # Daily bars are append-only, so only insert past the latest stored date instead
+    # of loading the stock's full date history to dedupe against.
+    last_date = (
+        db.query(sa_func.max(DailyPrice.date)).filter(DailyPrice.stock_id == stock.id).scalar()
+    )
 
     for idx, row in hist.iterrows():
         date = idx.date()
-        if date in existing_dates:
+        if last_date is not None and date <= last_date:
             continue
         db.add(
             DailyPrice(
@@ -232,10 +266,25 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
     week_52 = hist[hist.index >= hist.index.max() - dt.timedelta(days=365)]
     week_52_high_row = week_52["High"].idxmax()
 
-    info = yf.Ticker(stock.yf_ticker).fast_info
+    ticker = yf.Ticker(stock.yf_ticker)
+    # .get_info() carries market cap plus the informational fundamentals in the same
+    # single HTTP call .fast_info would have cost; fall back to fast_info if it fails.
+    try:
+        info = ticker.get_info() or {}
+    except Exception:
+        info = {}
+
     stock.current_price = float(hist["Close"].iloc[-1])
     stock.current_volume = int(hist["Volume"].iloc[-1])
-    stock.market_cap = getattr(info, "market_cap", None)
+    stock.market_cap = info.get("marketCap")
+    if stock.market_cap is None:
+        stock.market_cap = getattr(ticker.fast_info, "market_cap", None)
+    stock.sector = info.get("sector")
+    stock.industry = info.get("industry")
+    revenue_growth = info.get("revenueGrowth")
+    earnings_growth = info.get("earningsQuarterlyGrowth")
+    stock.revenue_growth = revenue_growth * 100 if revenue_growth is not None else None
+    stock.earnings_growth = earnings_growth * 100 if earnings_growth is not None else None
     stock.all_time_high = float(hist.loc[all_time_high_row, "High"])
     stock.all_time_high_date = all_time_high_row.date()
     stock.week_52_high = float(week_52.loc[week_52_high_row, "High"])
@@ -253,6 +302,19 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
         .all()
     )
     stock.weeks_of_history = len(weekly_rows)
+
+    # Denormalized latest-week snapshot (keeps the screen endpoint off weekly_prices).
+    stock.weekly_close = weekly_rows[-1].close if weekly_rows else None
+    stock.weekly_volume = weekly_rows[-1].volume if weekly_rows else None
+    prev_week = weekly_rows[-2] if len(weekly_rows) >= 2 else None
+    if weekly_rows and prev_week is not None and prev_week.close:
+        stock.weekly_pct_change = (weekly_rows[-1].close - prev_week.close) / prev_week.close * 100
+    else:
+        stock.weekly_pct_change = None
+
+    weekly_closes = pd.Series([wp.close for wp in weekly_rows if wp.close is not None])
+    stock.ema_10w = _ema(weekly_closes, 10)
+    stock.circuit_trap, stock.circuit_trap_weeks = _detect_circuit_trap(weekly_rows)
     _update_avg_weekly_volume(stock, weekly_rows)
     _upsert_breakout_metrics(db, stock, "ATH", weekly_rows)
     _upsert_breakout_metrics(db, stock, "52W", weekly_rows)

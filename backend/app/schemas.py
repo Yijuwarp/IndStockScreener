@@ -36,8 +36,17 @@ class StockOut(BaseModel):
     ema_21d: Optional[float] = None
     ema_50d: Optional[float] = None
     ema_200d: Optional[float] = None
+    ema_10w: Optional[float] = None
     has_resistance: Optional[bool] = None
     volume_dry_up: Optional[bool] = None
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+    revenue_growth: Optional[float] = None
+    earnings_growth: Optional[float] = None
+    circuit_trap: Optional[bool] = None
+    circuit_trap_weeks: Optional[int] = None
+    exit_signal: Optional[bool] = None
+    pyramid_signal: Optional[bool] = None
 
     class Config:
         from_attributes = True
@@ -59,6 +68,7 @@ class IndexOut(BaseModel):
 
 
 class ScreenerCriteria(BaseModel):
+    symbols: Optional[list[str]] = None  # explicit symbol list (watchlist fetch) -- bypasses screening
     exchange: Optional[str] = None  # "NSE" (BSE not yet supported)
     min_market_cap: Optional[float] = None
     max_market_cap: Optional[float] = None

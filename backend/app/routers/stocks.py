@@ -77,9 +77,13 @@ def attach_breakout_fields(db: Session, stocks: list[Stock], basis: str = "ATH")
     return stocks
 
 
+PYRAMID_MIN_CONSOLIDATION_WEEKS = 4  # course: Darvas box of at least 4 weeks
+
+
 def attach_derived_fields(stocks: list[Stock], basis: str = "ATH") -> list[Stock]:
-    """Attach computed-on-the-fly fields that don't need their own table: stock age and
-    resistance (resistance is only meaningful under the 52W basis -- see PRD-ui-momentum-v2)."""
+    """Attach computed-on-the-fly fields that don't need their own table: stock age,
+    resistance (52W basis only -- see PRD-ui-momentum-v2), and the course's exit /
+    pyramid signals. Must run after attach_weekly_fields and attach_breakout_fields."""
     today = dt.date.today()
     for stock in stocks:
         stock.stock_age_days = (today - stock.listing_date).days if stock.listing_date else None
@@ -87,6 +91,21 @@ def attach_derived_fields(stocks: list[Stock], basis: str = "ATH") -> list[Stock
             stock.has_resistance = stock.all_time_high > stock.current_price
         else:
             stock.has_resistance = None
+
+        # Course sell rule: weekly close below the 10-week EMA.
+        if stock.weekly_close is not None and stock.ema_10w is not None:
+            stock.exit_signal = stock.weekly_close < stock.ema_10w
+        else:
+            stock.exit_signal = None
+
+        # Course pyramiding rule: a >=4-week box broken this week.
+        if stock.breakout_age_weeks is not None and stock.consolidation_weeks is not None:
+            stock.pyramid_signal = (
+                stock.breakout_age_weeks == 0
+                and stock.consolidation_weeks >= PYRAMID_MIN_CONSOLIDATION_WEEKS
+            )
+        else:
+            stock.pyramid_signal = None
     return stocks
 
 
@@ -101,6 +120,8 @@ def list_stocks(db: Session = Depends(get_db)):
 def screen_stocks(criteria: ScreenerCriteria, db: Session = Depends(get_db)):
     query = db.query(Stock)
 
+    if criteria.symbols:
+        query = query.filter(Stock.symbol.in_(criteria.symbols))
     if criteria.exchange:
         query = query.filter(Stock.exchange == criteria.exchange)
     if criteria.min_market_cap is not None:

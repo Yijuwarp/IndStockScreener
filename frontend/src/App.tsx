@@ -10,7 +10,7 @@ import "./App.css";
 const CRORE = 1e7;
 
 const MARKET_CAP_FIELDS: RangeField[] = [
-  { criteriaKey: "min_market_cap", label: "Min", defaultValue: 500, suffix: " Cr", toStored: (v) => v * CRORE, fromStored: (v) => v / CRORE },
+  { criteriaKey: "min_market_cap", label: "Min", defaultValue: 1000, suffix: " Cr", toStored: (v) => v * CRORE, fromStored: (v) => v / CRORE },
   { criteriaKey: "max_market_cap", label: "Max", defaultValue: 50000, suffix: " Cr", toStored: (v) => v * CRORE, fromStored: (v) => v / CRORE },
 ];
 
@@ -70,7 +70,7 @@ const CAP_CATEGORY_OPTIONS = [
 const DEFAULT_CRITERIA: ScreenerCriteria = {
   basis: "ATH",
   new_all_time_high_this_week: true,
-  min_market_cap: 500 * CRORE,
+  min_market_cap: 1000 * CRORE,
   max_market_cap: 50000 * CRORE,
   min_avg_weekly_volume: 50000,
   min_breakout_volume_ratio: 1.5,
@@ -109,7 +109,19 @@ type Column = {
   render: (s: Stock) => React.ReactNode;
   value: (s: Stock) => number | string | null;
   colorize?: boolean;
+  colorClass?: (s: Stock) => string;
 };
+
+function scoreStock(s: Stock): number {
+  let n = 0;
+  if (s.consolidation_range_pct != null && s.consolidation_range_pct < 15) n++;
+  if (s.breakout_age_weeks != null && s.breakout_age_weeks <= 4) n++;
+  if (s.breakout_volume_ratio != null && s.breakout_volume_ratio >= 2.0) n++;
+  if (s.volume_dry_up === true) n++;
+  if (s.extension_pct != null && s.extension_pct <= 10) n++;
+  if (s.current_price != null && s.ema_200d != null && s.current_price > s.ema_200d) n++;
+  return n;
+}
 
 const COLUMNS: Column[] = [
   {
@@ -143,6 +155,67 @@ const COLUMNS: Column[] = [
     ),
     value: (s) => s.symbol,
   },
+  {
+    key: "flags",
+    label: "Flags",
+    numeric: false,
+    render: (s) => (
+      <span className="flags-cell">
+        {s.circuit_trap && (
+          <span
+            className="flag-badge flag-trap"
+            title={`Circuit-stock trap: ${s.circuit_trap_weeks ?? "several"} straight weeks of ~5% gains on negligible volume. Course rule: do not buy.`}
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <path
+                d="M8 2.2L14.6 13.2H1.4L8 2.2Z M8 6.4V9.6 M8 11.4V11.9"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        )}
+        {s.exit_signal && (
+          <span
+            className="flag-badge flag-exit"
+            title="Exit signal: weekly close is below the 10-week EMA (course stoploss line)."
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <path
+                d="M6.5 3H3V13H6.5 M10 5.5L12.5 8L10 10.5 M12.5 8H6"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        )}
+        {s.pyramid_signal && (
+          <span
+            className="flag-badge flag-pyramid"
+            title="Pyramid setup: a 4+ week consolidation box broke out this week. Course rule: add to your position if you hold it."
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <path
+                d="M8 2.5L14 13.5H2L8 2.5Z M4.7 8.6H11.3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        )}
+      </span>
+    ),
+    value: (s) => (s.circuit_trap ? 1 : 0) + (s.exit_signal ? 1 : 0) + (s.pyramid_signal ? 1 : 0),
+  },
   { key: "exchange", label: "Exchange", numeric: false, render: (s) => s.exchange, value: (s) => s.exchange },
   { key: "name", label: "Name", numeric: false, render: (s) => s.name, value: (s) => s.name },
   { key: "current_price", label: "Price", numeric: true, render: (s) => fmtPrice(s.current_price), value: (s) => s.current_price },
@@ -156,6 +229,15 @@ const COLUMNS: Column[] = [
   { key: "ema_21d", label: "21D EMA", numeric: true, render: (s) => fmtPrice(s.ema_21d), value: (s) => s.ema_21d },
   { key: "ema_50d", label: "50D EMA", numeric: true, render: (s) => fmtPrice(s.ema_50d), value: (s) => s.ema_50d },
   { key: "ema_200d", label: "200D EMA", numeric: true, render: (s) => fmtPrice(s.ema_200d), value: (s) => s.ema_200d },
+  {
+    key: "ema_10w",
+    label: "10W EMA",
+    numeric: true,
+    render: (s) => fmtPrice(s.ema_10w),
+    value: (s) => s.ema_10w,
+    colorClass: (s) =>
+      s.weekly_close != null && s.ema_10w != null ? (s.weekly_close >= s.ema_10w ? "" : "negative") : "",
+  },
   { key: "breakout_count", label: "Breakout #", numeric: true, render: (s) => fmtInt(s.breakout_count), value: (s) => s.breakout_count },
   { key: "breakout_week", label: "Breakout Week", numeric: true, render: (s) => fmtDate(s.breakout_week), value: (s) => s.breakout_week },
   { key: "breakout_level", label: "Breakout Level", numeric: true, render: (s) => fmtPrice(s.breakout_level), value: (s) => s.breakout_level },
@@ -164,20 +246,74 @@ const COLUMNS: Column[] = [
   { key: "extension_pct", label: "Extension %", numeric: true, colorize: true, render: (s) => fmtPct(s.extension_pct), value: (s) => s.extension_pct },
   { key: "breakout_age_weeks", label: "Breakout Age", numeric: true, render: (s) => fmtInt(s.breakout_age_weeks), value: (s) => s.breakout_age_weeks },
   { key: "avg_weekly_volume", label: "Avg Weekly Vol", numeric: true, render: (s) => fmtInt(s.avg_weekly_volume), value: (s) => s.avg_weekly_volume },
-  { key: "breakout_volume_ratio", label: "Vol Ratio", numeric: true, render: (s) => fmtRatio(s.breakout_volume_ratio), value: (s) => s.breakout_volume_ratio },
-  { key: "volume_dry_up", label: "Vol Dry-Up", numeric: false, render: (s) => fmtBool(s.volume_dry_up), value: (s) => fmtBool(s.volume_dry_up) },
+  {
+    key: "breakout_volume_ratio",
+    label: "Vol Ratio",
+    numeric: true,
+    render: (s) => fmtRatio(s.breakout_volume_ratio),
+    value: (s) => s.breakout_volume_ratio,
+    colorClass: (s) => {
+      if (s.breakout_volume_ratio == null) return "";
+      return s.breakout_volume_ratio >= 2.0 ? "positive" : s.breakout_volume_ratio < 1.5 ? "negative" : "";
+    },
+  },
+  {
+    key: "volume_dry_up",
+    label: "Vol Dry-Up",
+    numeric: false,
+    render: (s) => fmtBool(s.volume_dry_up),
+    value: (s) => fmtBool(s.volume_dry_up),
+    colorClass: (s) => (s.volume_dry_up === true ? "positive" : ""),
+  },
+  {
+    key: "ema_trend",
+    label: "Trend",
+    numeric: true,
+    render: (s) => {
+      const dot = (above: boolean | null) => (
+        <span style={{ color: above ? "var(--green)" : "var(--text-dim)" }}>●</span>
+      );
+      const a21 = s.current_price != null && s.ema_21d != null ? s.current_price >= s.ema_21d : null;
+      const a50 = s.current_price != null && s.ema_50d != null ? s.current_price >= s.ema_50d : null;
+      const a200 = s.current_price != null && s.ema_200d != null ? s.current_price >= s.ema_200d : null;
+      return <span style={{ letterSpacing: "3px" }}>{dot(a21)}{dot(a50)}{dot(a200)}</span>;
+    },
+    value: (s) => {
+      let n = 0;
+      if (s.current_price != null && s.ema_21d != null && s.current_price >= s.ema_21d) n++;
+      if (s.current_price != null && s.ema_50d != null && s.current_price >= s.ema_50d) n++;
+      if (s.current_price != null && s.ema_200d != null && s.current_price >= s.ema_200d) n++;
+      return n;
+    },
+  },
+  {
+    key: "score",
+    label: "Score",
+    numeric: true,
+    render: (s) => `${scoreStock(s)}/6`,
+    value: (s) => scoreStock(s),
+    colorClass: (s) => {
+      const sc = scoreStock(s);
+      return sc >= 5 ? "positive" : sc >= 3 ? "warning" : "";
+    },
+  },
   { key: "stock_age", label: "Stock Age", numeric: true, render: (s) => fmtAge(s.stock_age_days), value: (s) => s.stock_age_days },
   { key: "cap_category", label: "Cap", numeric: false, render: (s) => s.cap_category, value: (s) => s.cap_category },
   { key: "weeks_of_history", label: "Weeks of Data", numeric: true, render: (s) => fmtInt(s.weeks_of_history), value: (s) => s.weeks_of_history },
+  { key: "sector", label: "Sector", numeric: false, render: (s) => s.sector ?? "", value: (s) => s.sector },
+  { key: "industry", label: "Industry", numeric: false, render: (s) => s.industry ?? "", value: (s) => s.industry },
+  { key: "revenue_growth", label: "Rev Growth", numeric: true, colorize: true, render: (s) => fmtPct(s.revenue_growth), value: (s) => s.revenue_growth },
+  { key: "earnings_growth", label: "EPS Growth", numeric: true, colorize: true, render: (s) => fmtPct(s.earnings_growth), value: (s) => s.earnings_growth },
 ];
 
 // Symbol is pinned: always the leftmost column, never draggable, never hideable.
 const PINNED_COLUMN_KEY = "symbol";
 
 const DEFAULT_VISIBLE = [
-  "name", "current_price", "current_volume", "market_cap",
+  "flags", "score", "name", "current_price", "current_volume", "market_cap",
   "weekly_pct_change", "breakout_count", "breakout_age_weeks",
-  "extension_pct", "breakout_volume_ratio", "volume_dry_up", "cap_category",
+  "extension_pct", "breakout_volume_ratio", "volume_dry_up", "ema_trend", "ema_10w",
+  "cap_category", "sector", "industry", "revenue_growth", "earnings_growth",
 ];
 
 const DEFAULT_COLUMN_ORDER = [
@@ -189,6 +325,23 @@ const DEFAULT_COLUMN_ORDER = [
 
 const COLUMN_ORDER_COOKIE = "iss_column_order";
 const COLUMN_VISIBLE_COOKIE = "iss_column_visible";
+const WATCHLIST_COOKIE = "iss_watchlist";
+
+function sortRows(rows: Stock[], sort: { key: string; dir: 1 | -1 }): Stock[] {
+  const col = COLUMNS.find((c) => c.key === sort.key);
+  if (!col) return rows;
+  return [...rows].sort((a, b) => {
+    const av = col.value(a);
+    const bv = col.value(b);
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === "string" || typeof bv === "string") {
+      return String(av).localeCompare(String(bv)) * sort.dir;
+    }
+    return (av - bv) * sort.dir;
+  });
+}
 
 function reorderColumns(prev: string[], fromKey: string, toKey: string): string[] {
   const fromIdx = prev.indexOf(fromKey);
@@ -200,6 +353,12 @@ function reorderColumns(prev: string[], fromKey: string, toKey: string): string[
   return next;
 }
 
+const PRESETS: { label: string; criteria: ScreenerCriteria }[] = [
+  { label: "Course defaults", criteria: DEFAULT_CRITERIA },
+  { label: "Fresh breakout", criteria: { ...DEFAULT_CRITERIA, max_breakout_age_weeks: 4, min_breakout_volume_ratio: 2.0 } },
+  { label: "Tight base", criteria: { ...DEFAULT_CRITERIA, min_consolidation_weeks: 6, max_consolidation_range_pct: 15 } },
+];
+
 function App() {
   const [criteria, setCriteria] = useState<ScreenerCriteria>(DEFAULT_CRITERIA);
   const [results, setResults] = useState<Stock[]>([]);
@@ -209,20 +368,51 @@ function App() {
   const [indexes, setIndexes] = useState<MarketIndex[]>([]);
   const [indexPanelOpen, setIndexPanelOpen] = useState(false);
 
-  const [columnOrder, setColumnOrder] = useState<string[]>(() =>
-    getJSONCookie(COLUMN_ORDER_COOKIE, DEFAULT_COLUMN_ORDER)
-  );
-  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(
-    () => new Set(getJSONCookie<string[]>(COLUMN_VISIBLE_COOKIE, DEFAULT_VISIBLE))
-  );
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    const stored = getJSONCookie<string[]>(COLUMN_ORDER_COOKIE, DEFAULT_COLUMN_ORDER);
+    const missing = DEFAULT_COLUMN_ORDER.filter((k) => !stored.includes(k));
+    return missing.length ? [...stored, ...missing] : stored;
+  });
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(() => {
+    const stored = new Set(getJSONCookie<string[]>(COLUMN_VISIBLE_COOKIE, DEFAULT_VISIBLE));
+    // Newly-shipped default columns (absent from the saved order cookie, so the user
+    // never chose to hide them) start visible.
+    const knownKeys = new Set(getJSONCookie<string[]>(COLUMN_ORDER_COOKIE, DEFAULT_COLUMN_ORDER));
+    for (const k of DEFAULT_VISIBLE) {
+      if (!knownKeys.has(k)) stored.add(k);
+    }
+    return stored;
+  });
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: "weekly_pct_change", dir: -1 });
+  const [watchlist, setWatchlist] = useState<string[]>(() => getJSONCookie(WATCHLIST_COOKIE, []));
+  const [watchlistRows, setWatchlistRows] = useState<Stock[]>([]);
+  const [watchlistOpen, setWatchlistOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [dragKey, setDragKey] = useState<string | null>(null);
   const columnMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setJSONCookie(COLUMN_ORDER_COOKIE, columnOrder), [columnOrder]);
   useEffect(() => setJSONCookie(COLUMN_VISIBLE_COOKIE, Array.from(visibleColumns)), [visibleColumns]);
+  useEffect(() => setJSONCookie(WATCHLIST_COOKIE, watchlist), [watchlist]);
+
+  // Watchlist rows bypass all filters: fetched by explicit symbol list, only the
+  // basis follows the main screen so breakout columns stay comparable.
+  useEffect(() => {
+    if (watchlist.length === 0) {
+      setWatchlistRows([]);
+      return;
+    }
+    screenStocks({ basis: criteria.basis, symbols: watchlist })
+      .then(setWatchlistRows)
+      .catch(() => {});
+  }, [watchlist, criteria.basis]);
+
+  const toggleWatch = (symbol: string) => {
+    setWatchlist((prev) =>
+      prev.includes(symbol) ? prev.filter((s) => s !== symbol) : [...prev, symbol]
+    );
+  };
 
   useEffect(() => {
     const onClickOutside = (e: MouseEvent) => {
@@ -285,13 +475,22 @@ function App() {
     });
   };
 
+  const applyPreset = (preset: ScreenerCriteria) => {
+    setCriteria(preset);
+    runScreen(preset);
+  };
+
   const handleBasisChange = (basis: "ATH" | "52W") => {
-    setCriteria((prev) => ({
-      ...prev,
-      basis,
-      new_all_time_high_this_week: basis === "ATH" ? true : undefined,
-      new_52_week_high_this_week: basis === "52W" ? true : undefined,
-    }));
+    setCriteria((prev) => {
+      const next = {
+        ...prev,
+        basis,
+        new_all_time_high_this_week: basis === "ATH" ? true : undefined,
+        new_52_week_high_this_week: basis === "52W" ? true : undefined,
+      };
+      runScreen(next);
+      return next;
+    });
   };
 
   const handleSort = (key: string) => {
@@ -309,23 +508,20 @@ function App() {
     [columnOrder, visibleColumns]
   );
 
-  const sortedResults = useMemo(() => {
-    const col = COLUMNS.find((c) => c.key === sort.key);
-    if (!col) return results;
-    return [...results].sort((a, b) => {
-      const av = col.value(a);
-      const bv = col.value(b);
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      if (typeof av === "string" || typeof bv === "string") {
-        return String(av).localeCompare(String(bv)) * sort.dir;
-      }
-      return (av - bv) * sort.dir;
-    });
-  }, [results, sort]);
+  const sortedResults = useMemo(() => sortRows(results, sort), [results, sort]);
+  const sortedWatchlist = useMemo(() => sortRows(watchlistRows, sort), [watchlistRows, sort]);
 
   const isAth = criteria.basis !== "52W";
+
+  // Course market-regime rule: stop buying while NIFTY closes below its 40-week EMA
+  // (~200 trading days, so the daily 200D EMA stands in for it).
+  const nifty = indexes.find((i) => i.code === "NIFTY50");
+  const marketRegime: "buy" | "nobuy" | null =
+    nifty && nifty.current_price != null && nifty.ema_200d != null
+      ? nifty.current_price >= nifty.ema_200d
+        ? "buy"
+        : "nobuy"
+      : null;
 
   const displayedResults = useMemo(() => {
     if (!searchQuery.trim()) return sortedResults;
@@ -505,6 +701,84 @@ function App() {
 
   const orderedFilterBlocks = GROUP_ORDER.flatMap((g) => filterBlocks.filter((f) => f.group === g));
 
+  // Header + row markup shared by the watchlist table and the main results table,
+  // so sorting, column order, and visibility stay in lockstep between them.
+  const headerRow = (
+    <tr>
+      <th
+        key={pinnedColumn.key}
+        className={"pinned-column " + (pinnedColumn.numeric ? "" : "col-text ") + (sort.key === pinnedColumn.key ? "sorted" : "")}
+        onClick={() => handleSort(pinnedColumn.key)}
+        title={FIELD_INFO[pinnedColumn.key]}
+      >
+        {pinnedColumn.label}{sort.key === pinnedColumn.key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
+      </th>
+      {orderedVisibleColumns.map((c) => (
+        <th
+          key={c.key}
+          className={
+            (c.numeric ? "" : "col-text ") +
+            (sort.key === c.key ? "sorted " : "") +
+            (dragKey === c.key ? "dragging" : "")
+          }
+          onClick={() => handleSort(c.key)}
+          title={FIELD_INFO[c.key]}
+          draggable
+          onDragStart={(e) => {
+            e.stopPropagation();
+            setDragKey(c.key);
+          }}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (dragKey && dragKey !== c.key) {
+              setColumnOrder((prev) => reorderColumns(prev, dragKey, c.key));
+            }
+            setDragKey(null);
+          }}
+          onDragEnd={() => setDragKey(null)}
+        >
+          {c.label}{sort.key === c.key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
+        </th>
+      ))}
+    </tr>
+  );
+
+  const renderRow = (s: Stock) => {
+    const watched = watchlist.includes(s.symbol);
+    return (
+      <tr key={s.id}>
+        <td className="pinned-column col-text symbol">
+          <span className="symbol-cell">
+            <button
+              type="button"
+              className={"watch-button" + (watched ? " watched" : "")}
+              title={watched ? "Remove from watchlist" : "Add to watchlist"}
+              aria-label={watched ? `Remove ${s.symbol} from watchlist` : `Add ${s.symbol} to watchlist`}
+              onClick={() => toggleWatch(s.symbol)}
+            >
+              {watched ? "×" : "+"}
+            </button>
+            {pinnedColumn.render(s)}
+          </span>
+        </td>
+        {orderedVisibleColumns.map((c) => {
+          const v = c.value(s);
+          const colorClass = c.colorClass
+            ? c.colorClass(s)
+            : c.colorize && typeof v === "number"
+            ? v >= 0 ? "positive" : "negative"
+            : "";
+          return (
+            <td key={c.key} className={(c.numeric ? "" : "col-text ") + colorClass}>
+              {c.render(s)}
+            </td>
+          );
+        })}
+      </tr>
+    );
+  };
+
   return (
     <div className="screener">
       <div className="topbar">
@@ -520,6 +794,18 @@ function App() {
         <button type="button" className="index-panel-toggle" onClick={() => setIndexPanelOpen((v) => !v)}>
           Index Check-in {indexPanelOpen ? "▴" : "▾"}
         </button>
+        {marketRegime && (
+          <span
+            className={"market-regime " + marketRegime}
+            title={
+              marketRegime === "buy"
+                ? "NIFTY 50 is above its 40-week EMA — the course green-lights new buys."
+                : "NIFTY 50 closed below its 40-week EMA — course rule: stop buying until it reclaims the line."
+            }
+          >
+            {marketRegime === "buy" ? "● Market: Buy zone" : "● Market: No-buy zone"}
+          </span>
+        )}
         {status && (
           <span className={"data-status" + (status.refreshing ? " refreshing" : "")}>
             Data as of: {status.data_as_of ?? "never"}
@@ -585,6 +871,17 @@ function App() {
             </button>
           );
         })()}
+        <div className="filter-separator" aria-hidden="true" />
+        {PRESETS.map((p) => (
+          <button
+            key={p.label}
+            type="button"
+            className="range-filter-button"
+            onClick={() => applyPreset(p.criteria)}
+          >
+            {p.label}
+          </button>
+        ))}
       </form>
 
       <div className="screen-row">
@@ -601,6 +898,22 @@ function App() {
           {(criteria.new_all_time_high_this_week || criteria.new_52_week_high_this_week) &&
             " \"New high this week\" resets every Monday — early in the week, few or no stocks may qualify yet. Try toggling it off."}
         </p>
+      )}
+
+      {watchlist.length > 0 && (
+        <div className="watchlist-section">
+          <button type="button" className="watchlist-header" onClick={() => setWatchlistOpen((v) => !v)}>
+            Watchlist ({sortedWatchlist.length}) {watchlistOpen ? "▴" : "▾"}
+          </button>
+          {watchlistOpen && (
+            <div className="table-wrap watchlist-wrap">
+              <table>
+                <thead>{headerRow}</thead>
+                <tbody>{sortedWatchlist.map(renderRow)}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
 
       <div className="table-toolbar">
@@ -655,62 +968,8 @@ function App() {
 
       <div className="table-wrap">
         <table>
-          <thead>
-            <tr>
-              <th
-                key={pinnedColumn.key}
-                className={"pinned-column " + (pinnedColumn.numeric ? "" : "col-text ") + (sort.key === pinnedColumn.key ? "sorted" : "")}
-                onClick={() => handleSort(pinnedColumn.key)}
-                title={FIELD_INFO[pinnedColumn.key]}
-              >
-                {pinnedColumn.label}{sort.key === pinnedColumn.key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
-              </th>
-              {orderedVisibleColumns.map((c) => (
-                <th
-                  key={c.key}
-                  className={
-                    (c.numeric ? "" : "col-text ") +
-                    (sort.key === c.key ? "sorted " : "") +
-                    (dragKey === c.key ? "dragging" : "")
-                  }
-                  onClick={() => handleSort(c.key)}
-                  title={FIELD_INFO[c.key]}
-                  draggable
-                  onDragStart={(e) => {
-                    e.stopPropagation();
-                    setDragKey(c.key);
-                  }}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    if (dragKey && dragKey !== c.key) {
-                      setColumnOrder((prev) => reorderColumns(prev, dragKey, c.key));
-                    }
-                    setDragKey(null);
-                  }}
-                  onDragEnd={() => setDragKey(null)}
-                >
-                  {c.label}{sort.key === c.key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {displayedResults.map((s) => (
-              <tr key={s.id}>
-                <td className="pinned-column col-text symbol">{pinnedColumn.render(s)}</td>
-                {orderedVisibleColumns.map((c) => {
-                  const v = c.value(s);
-                  const colorClass = c.colorize && typeof v === "number" ? (v >= 0 ? "positive" : "negative") : "";
-                  return (
-                    <td key={c.key} className={(c.numeric ? "" : "col-text ") + colorClass}>
-                      {c.render(s)}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
+          <thead>{headerRow}</thead>
+          <tbody>{displayedResults.map(renderRow)}</tbody>
         </table>
       </div>
     </div>

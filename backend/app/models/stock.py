@@ -30,6 +30,24 @@ class Stock(Base):
     ema_21d = Column(Float, nullable=True)
     ema_50d = Column(Float, nullable=True)
     ema_200d = Column(Float, nullable=True)
+    ema_10w = Column(Float, nullable=True)  # 10-week EMA of weekly closes (course stoploss line)
+
+    # Latest-week snapshot, denormalized from weekly_prices at ingestion time so the
+    # screen endpoint never has to touch that (large) table.
+    weekly_close = Column(Float, nullable=True)
+    weekly_volume = Column(BigInteger, nullable=True)
+    weekly_pct_change = Column(Float, nullable=True)
+
+    # Fundamentals snapshot (informational columns only, not screening criteria --
+    # the course methodology is price/volume only).
+    sector = Column(String, nullable=True)
+    industry = Column(String, nullable=True)
+    revenue_growth = Column(Float, nullable=True)  # yoy quarterly revenue growth, percent
+    earnings_growth = Column(Float, nullable=True)  # yoy quarterly earnings growth, percent
+
+    # Circuit-stock trap: consecutive ~5% up-weeks on negligible volume (course warning sign).
+    circuit_trap = Column(Boolean, nullable=True)
+    circuit_trap_weeks = Column(Integer, nullable=True)  # length of the consecutive ~5% run
 
     prices = relationship("DailyPrice", back_populates="stock", cascade="all, delete-orphan")
 
