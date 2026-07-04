@@ -1096,6 +1096,12 @@ function App() {
         ))}
       </div>
 
+      <div className="screen-row">
+        <button type="button" className="screen-button" disabled={loading} onClick={() => runScreen(criteria)}>
+          {loading ? "Screening..." : "Screen"}
+        </button>
+      </div>
+
       {error && <p className="error">{error}</p>}
 
       {!loading && !error && sortedResults.length === 0 && (

@@ -129,22 +129,6 @@ def _update_avg_weekly_volume(stock: Stock, weekly_rows: list[WeeklyPrice]) -> N
     stock.avg_weekly_volume = int(sum(recent) / len(recent)) if recent else None
 
 
-ROLLING_52W_WEEKS = 52
-
-
-def _rolling_52w_high(weekly_rows: list[WeeklyPrice]) -> list[tuple[dt.date, float]]:
-    """Trailing 52-week high series, used as the "basis" series for 52W breakouts."""
-    series = []
-    for i, wp in enumerate(weekly_rows):
-        if wp.high is None:
-            continue
-        window = weekly_rows[max(0, i - ROLLING_52W_WEEKS + 1):i + 1]
-        highs = [w.high for w in window if w.high is not None]
-        if highs:
-            series.append((wp.week_start, max(highs)))
-    return series
-
-
 def _upsert_breakout_metrics(db: Session, stock: Stock, basis: str, weekly_rows: list[WeeklyPrice]) -> None:
     """Recompute breakout metrics for the given basis ("ATH" or "52W") from this stock's weekly bars."""
     by_week = {wp.week_start: wp for wp in weekly_rows}
