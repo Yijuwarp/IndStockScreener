@@ -49,11 +49,11 @@ def detect_breakouts(
         highs.append(j)
 
         if basis != "ATH":
+            # bar j (= i-1 >= i-52) is always inside the window, so the deque
+            # never empties here.
             start = max(0, i - 52)
             while highs[0] < start:
                 highs.popleft()
-                if not highs:  # cannot happen: bar j is always in the window
-                    break
             while lows and lows[0] <= highs[0]:
                 lows.popleft()
 

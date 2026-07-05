@@ -6,13 +6,9 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.stock import Stock, BreakoutMetrics
 from app.schemas import StockOut, ScreenerCriteria
+from app.utils import start_of_week
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
-
-
-def start_of_week(d: dt.date) -> dt.date:
-    """Monday of the calendar week containing d (IST calendar week)."""
-    return d - dt.timedelta(days=d.weekday())
 
 
 def attach_breakout_fields(db: Session, stocks: list[Stock], basis: str = "ATH") -> list[Stock]:

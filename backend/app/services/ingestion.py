@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.models.stock import Stock, WeeklyPrice, BreakoutMetrics
 from app.services.breakout import detect_breakouts
+from app.utils import start_of_week
 
 AVG_VOLUME_WEEKS = 12
 LARGE_CAP_RANK = 100  # SEBI convention: top 100 by market cap
@@ -93,7 +94,7 @@ def _hist_to_daily_df(hist: pd.DataFrame) -> pd.DataFrame:
 def _aggregate_weekly(daily_df: pd.DataFrame) -> pd.DataFrame:
     """Aggregate daily bars into Monday-anchored weekly bars, indexed by week_start."""
     df = daily_df.copy()
-    df["week_start"] = df["date"].apply(lambda d: d - dt.timedelta(days=d.weekday()))
+    df["week_start"] = df["date"].apply(start_of_week)
     return df.groupby("week_start").agg(
         open=("open", "first"),
         high=("high", "max"),
@@ -204,8 +205,7 @@ def _upsert_breakout_metrics(db: Session, stock: Stock, basis: str, weekly_rows:
             bm.extension_pct = None
 
         today = dt.date.today()
-        current_week_start = today - dt.timedelta(days=today.weekday())
-        bm.breakout_age_weeks = (current_week_start - latest.week_start).days // 7
+        bm.breakout_age_weeks = (start_of_week(today) - latest.week_start).days // 7
 
         breakout_idx = by_index[latest.week_start]
         prior_window = weekly_rows[max(0, breakout_idx - AVG_VOLUME_WEEKS):breakout_idx]
@@ -278,12 +278,20 @@ def _detect_back_adjustment(
     divergence means every stored bar is stale.
 
     Only complete overlapping weeks are compared: the earliest fetched week may be
-    partially covered by the window, and the latest stored week may still be in
-    progress, so both are excluded."""
+    partially covered by the window, so it is excluded. The last stored week is
+    compared only when its bar is known-complete (it was stored during a later
+    week) -- a bar stored mid-week holds a partial close that would diverge from
+    the fetched full week without any adjustment, while skipping a complete last
+    week would let an adjustment landing right after it go undetected for a run
+    and be overwritten with mixed-scale data."""
     if fetched_weekly.empty:
         return False
     first_week = fetched_weekly.index.min()
-    candidates = [w for w in fetched_weekly.index if first_week < w < last_week]
+    last_week_bar_complete = (
+        stock.last_updated is not None and start_of_week(stock.last_updated) > last_week
+    )
+    newest = last_week if last_week_bar_complete else last_week - dt.timedelta(days=1)
+    candidates = [w for w in fetched_weekly.index if first_week < w <= newest]
     if not candidates:
         return False
     candidates = sorted(candidates)[-OVERLAP_CHECK_WEEKS:]
