@@ -1,3 +1,14 @@
+"""Price ingestion with weekly-only storage.
+
+The app screens on a weekly timeframe, so weekly bars are the only stored price
+history. Daily bars fetched from yfinance live in memory just long enough to:
+  - aggregate into Monday-anchored weekly bars (upserted into weekly_prices),
+  - update the daily-derived snapshot scalars on stocks (current price/volume,
+    daily EMAs; incremental runs continue EMAs via the ewm recursion).
+Long-lookback fields (all-time high, 52-week high, listing date) are derived from
+the stored weekly bars at week precision. This keeps the database ~5x smaller
+than storing dailies (see docs: weekly-granularity decision, 2026-07-05).
+"""
 import datetime as dt
 
 import pandas as pd
@@ -5,7 +16,7 @@ import yfinance as yf
 from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
-from app.models.stock import Stock, DailyPrice, WeeklyPrice, BreakoutMetrics
+from app.models.stock import Stock, WeeklyPrice, BreakoutMetrics
 from app.services.breakout import detect_breakouts
 
 AVG_VOLUME_WEEKS = 12
@@ -30,6 +41,21 @@ def _ema(series: pd.Series, span: int) -> float | None:
     return float(series.ewm(span=span, adjust=False).mean().iloc[-1])
 
 
+def _ema_advance(prev: float | None, closes: pd.Series, span: int) -> float | None:
+    """Continue an EMA from its stored value using only the new closes -- the
+    ewm(adjust=False) recursion, so incremental runs don't need old daily bars.
+    Falls back to computing from scratch when there is no stored value."""
+    if closes.empty:
+        return prev
+    if prev is None:
+        return _ema(closes, span)
+    k = 2 / (span + 1)
+    value = prev
+    for close in closes:
+        value = close * k + value * (1 - k)
+    return float(value)
+
+
 def recompute_cap_categories(db: Session) -> None:
     """Rank-based Large/Mid/Small classification across the whole universe."""
     stocks = (
@@ -48,40 +74,44 @@ def recompute_cap_categories(db: Session) -> None:
     db.commit()
 
 
-def _load_daily_df(db: Session, stock: Stock) -> pd.DataFrame:
-    """The stock's stored daily bars as a DataFrame -- the single source of truth
-    for snapshot metrics, so a fetch window can be as small as a few weeks."""
-    rows = (
-        db.query(
-            DailyPrice.date, DailyPrice.open, DailyPrice.high,
-            DailyPrice.low, DailyPrice.close, DailyPrice.volume,
-        )
-        .filter(DailyPrice.stock_id == stock.id)
-        .order_by(DailyPrice.date.asc())
-        .all()
+def _hist_to_daily_df(hist: pd.DataFrame) -> pd.DataFrame:
+    """A fetched yfinance history window as a date/open/high/low/close/volume frame.
+    Daily bars are never stored -- they live only in memory for the duration of one
+    stock's refresh (see the module docstring on weekly-only storage)."""
+    return pd.DataFrame(
+        {
+            "date": [d.date() for d in hist.index],
+            "open": hist["Open"].values,
+            "high": hist["High"].values,
+            "low": hist["Low"].values,
+            "close": hist["Close"].values,
+            "volume": hist["Volume"].values,
+        }
     )
-    return pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "volume"])
 
 
-def _rebuild_weekly_from_daily(
-    db: Session, stock: Stock, daily_df: pd.DataFrame, since_week: dt.date | None = None
-) -> None:
-    """Aggregate stored daily bars into Monday-anchored weekly bars. When since_week
-    is given, only weeks from that Monday onward are rebuilt (incremental refresh)."""
+def _aggregate_weekly(daily_df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate daily bars into Monday-anchored weekly bars, indexed by week_start."""
     df = daily_df.copy()
     df["week_start"] = df["date"].apply(lambda d: d - dt.timedelta(days=d.weekday()))
-    if since_week is not None:
-        df = df[df["week_start"] >= since_week]
-    if df.empty:
-        return
-
-    weekly = df.groupby("week_start").agg(
+    return df.groupby("week_start").agg(
         open=("open", "first"),
         high=("high", "max"),
         low=("low", "min"),
         close=("close", "last"),
         volume=("volume", "sum"),
     )
+
+
+def _upsert_weekly(
+    db: Session, stock: Stock, weekly: pd.DataFrame, since_week: dt.date | None = None
+) -> None:
+    """Write aggregated weekly bars to the DB. When since_week is given, only weeks
+    from that Monday onward are touched (incremental refresh)."""
+    if since_week is not None:
+        weekly = weekly[weekly.index >= since_week]
+    if weekly.empty:
+        return
 
     query = db.query(WeeklyPrice).filter(WeeklyPrice.stock_id == stock.id)
     if since_week is not None:
@@ -233,29 +263,38 @@ def fetch_history_batch(
 
 
 # Incremental refresh: window fetched for stocks that already have history, and the
-# relative price divergence on overlapping days that signals a split/bonus
+# relative price divergence on overlapping weeks that signals a split/bonus
 # back-adjustment (=> that stock needs a full-history refetch).
 INCREMENTAL_PERIOD = "1mo"
 ADJUSTMENT_TOLERANCE = 0.01
-OVERLAP_CHECK_DAYS = 5
+OVERLAP_CHECK_WEEKS = 3
 
 
-def _detect_back_adjustment(db: Session, stock: Stock, hist: pd.DataFrame, last_date: dt.date) -> bool:
-    """True when fetched closes disagree with stored closes on days we already have --
-    Yahoo back-adjusts the whole series after a split/bonus, so any divergence means
-    every stored bar is stale."""
-    overlap = hist[[d.date() <= last_date for d in hist.index]].tail(OVERLAP_CHECK_DAYS)
-    if overlap.empty:
+def _detect_back_adjustment(
+    db: Session, stock: Stock, fetched_weekly: pd.DataFrame, last_week: dt.date
+) -> bool:
+    """True when fetched weekly closes disagree with stored ones on weeks we already
+    have -- Yahoo back-adjusts the whole series after a split/bonus, so any
+    divergence means every stored bar is stale.
+
+    Only complete overlapping weeks are compared: the earliest fetched week may be
+    partially covered by the window, and the latest stored week may still be in
+    progress, so both are excluded."""
+    if fetched_weekly.empty:
         return False
-    dates = [d.date() for d in overlap.index]
+    first_week = fetched_weekly.index.min()
+    candidates = [w for w in fetched_weekly.index if first_week < w < last_week]
+    if not candidates:
+        return False
+    candidates = sorted(candidates)[-OVERLAP_CHECK_WEEKS:]
     stored = dict(
-        db.query(DailyPrice.date, DailyPrice.close)
-        .filter(DailyPrice.stock_id == stock.id, DailyPrice.date.in_(dates))
+        db.query(WeeklyPrice.week_start, WeeklyPrice.close)
+        .filter(WeeklyPrice.stock_id == stock.id, WeeklyPrice.week_start.in_(candidates))
         .all()
     )
-    for idx, row in overlap.iterrows():
-        fetched_close = row.get("Close")
-        stored_close = stored.get(idx.date())
+    for week in candidates:
+        fetched_close = fetched_weekly.loc[week, "close"]
+        stored_close = stored.get(week)
         if fetched_close is None or pd.isna(fetched_close) or not stored_close:
             continue
         if abs(fetched_close - stored_close) / stored_close > ADJUSTMENT_TOLERANCE:
@@ -264,14 +303,16 @@ def _detect_back_adjustment(db: Session, stock: Stock, hist: pd.DataFrame, last_
 
 
 def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = None) -> None:
-    """Refresh a stock from a fetched price history window and recompute its cached
-    snapshot fields from the stored daily bars.
+    """Refresh a stock from a fetched price history window.
 
-    `hist` may be a short incremental window (INCREMENTAL_PERIOD) or full history --
-    all metrics are computed from the DB, so the window only determines which new
-    daily bars get appended. If fetched prices disagree with stored ones on
-    overlapping days (split/bonus back-adjustment), the stock's stored history is
-    wiped and refetched in full.
+    Weekly bars are the only stored price history: the fetched daily bars live in
+    memory just long enough to update the weekly table and the daily-derived
+    snapshot scalars (current price/volume, ATH, 52W high, daily EMAs), then are
+    discarded. `hist` may be a short incremental window (INCREMENTAL_PERIOD) or
+    full history. If fetched weekly closes disagree with stored ones on complete
+    overlapping weeks (split/bonus back-adjustment), or the fetch doesn't reach
+    back to the last stored week (data gap), the stock's stored history is wiped
+    and refetched in full.
     """
     if hist is None:
         single = fetch_history_batch([stock.yf_ticker], chunk_size=1)
@@ -283,74 +324,33 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
     # which detaches the Stock instances they're iterating.
     stock = db.merge(stock)
 
-    last_date = (
-        db.query(sa_func.max(DailyPrice.date)).filter(DailyPrice.stock_id == stock.id).scalar()
+    daily_df = _hist_to_daily_df(hist)
+    fetched_weekly = _aggregate_weekly(daily_df)
+
+    last_week = (
+        db.query(sa_func.max(WeeklyPrice.week_start)).filter(WeeklyPrice.stock_id == stock.id).scalar()
     )
 
-    needs_full = last_date is not None and _detect_back_adjustment(db, stock, hist, last_date)
-
-    # Safety net: if the stored dailies don't reach back to the stock's known
-    # listing date (missing/partial archive), metrics computed from them would be
-    # garbage -- wipe and rebuild from full history.
-    if not needs_full and stock.listing_date is not None:
-        earliest = (
-            db.query(sa_func.min(DailyPrice.date)).filter(DailyPrice.stock_id == stock.id).scalar()
-        )
-        archive_ok = earliest is not None and earliest <= stock.listing_date + dt.timedelta(days=7)
-        if not archive_ok:
-            needs_full = True
-
-    if needs_full:
-        fetch_covers = (
-            stock.listing_date is not None
-            and hist.index.min().date() <= stock.listing_date + dt.timedelta(days=7)
-        )
-        if fetch_covers:
-            full_hist = hist  # this fetch already reaches the listing date; no refetch needed
-        else:
+    full_rebuild = last_week is None
+    if not full_rebuild:
+        # A gap means weeks between the stored history and this window are missing
+        # from both; a back-adjustment means every stored bar is stale.
+        gap = fetched_weekly.index.min() > last_week
+        if gap or _detect_back_adjustment(db, stock, fetched_weekly, last_week):
             full = fetch_history_batch([stock.yf_ticker], chunk_size=1, period="max")
             full_hist = full.get(stock.yf_ticker)
-        if full_hist is None or full_hist.empty:
-            return  # can't rebuild safely now; leave stored data for the next run
-        db.query(DailyPrice).filter(DailyPrice.stock_id == stock.id).delete()
-        db.query(WeeklyPrice).filter(WeeklyPrice.stock_id == stock.id).delete()
-        db.flush()
-        hist = full_hist
-        last_date = None
+            if full_hist is None or full_hist.empty:
+                return  # can't rebuild safely now; leave stored data for the next run
+            hist = full_hist
+            daily_df = _hist_to_daily_df(hist)
+            fetched_weekly = _aggregate_weekly(daily_df)
+            db.query(WeeklyPrice).filter(WeeklyPrice.stock_id == stock.id).delete()
+            db.flush()
+            full_rebuild = True
 
-    new_dates = []
-    for idx, row in hist.iterrows():
-        date = idx.date()
-        if last_date is not None and date <= last_date:
-            continue
-        new_dates.append(date)
-        db.add(
-            DailyPrice(
-                stock_id=stock.id,
-                date=date,
-                open=row.get("Open"),
-                high=row.get("High"),
-                low=row.get("Low"),
-                close=row.get("Close"),
-                volume=row.get("Volume"),
-            )
-        )
-    db.flush()
-
-    daily_df = _load_daily_df(db, stock)
-    if daily_df.empty:
-        return
-
-    # Rebuild weekly bars from the Monday of the earliest new day (everything, when
-    # history was just wiped or the stock is new).
-    if last_date is None:
-        since_week = None
-    elif new_dates:
-        first_new = min(new_dates)
-        since_week = first_new - dt.timedelta(days=first_new.weekday())
-    else:
-        since_week = last_date - dt.timedelta(days=last_date.weekday())  # refresh current week only
-    _rebuild_weekly_from_daily(db, stock, daily_df, since_week=since_week)
+    # Incremental runs re-write the last stored week (it may have been in progress
+    # at the previous run) plus anything newer; full rebuilds write everything.
+    _upsert_weekly(db, stock, fetched_weekly, since_week=None if full_rebuild else last_week)
     db.flush()
 
     ticker = yf.Ticker(stock.yf_ticker)
@@ -362,11 +362,6 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
         info = {}
 
     closes = daily_df["close"].dropna()
-    highs = daily_df["high"].dropna()
-    ath_idx = highs.idxmax()
-    max_date = daily_df["date"].iloc[-1]
-    week_52 = daily_df[daily_df["date"] >= max_date - dt.timedelta(days=365)]
-    w52_idx = week_52["high"].dropna().idxmax()
 
     stock.current_price = float(closes.iloc[-1]) if not closes.empty else None
     last_vol = daily_df["volume"].iloc[-1]
@@ -380,15 +375,23 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
     earnings_growth = info.get("earningsQuarterlyGrowth")
     stock.revenue_growth = revenue_growth * 100 if revenue_growth is not None else None
     stock.earnings_growth = earnings_growth * 100 if earnings_growth is not None else None
-    stock.all_time_high = float(daily_df["high"].loc[ath_idx])
-    stock.all_time_high_date = daily_df["date"].loc[ath_idx]
-    stock.week_52_high = float(week_52["high"].loc[w52_idx])
-    stock.week_52_high_date = week_52["date"].loc[w52_idx]
+
+    # Daily EMAs: full rebuilds compute from the fetched history; incremental runs
+    # continue the stored EMA with the closes that arrived since the last run
+    # (exact ewm recursion). The Saturday --full refresh recomputes from scratch,
+    # healing any drift from missed days.
+    if full_rebuild:
+        stock.ema_21d = _ema(closes, 21)
+        stock.ema_50d = _ema(closes, 50)
+        stock.ema_200d = _ema(closes, 200)
+    else:
+        prev_run = stock.last_updated or dt.date.min
+        new_closes = daily_df[daily_df["date"] > prev_run]["close"].dropna()
+        stock.ema_21d = _ema_advance(stock.ema_21d, new_closes, 21)
+        stock.ema_50d = _ema_advance(stock.ema_50d, new_closes, 50)
+        stock.ema_200d = _ema_advance(stock.ema_200d, new_closes, 200)
+
     stock.last_updated = dt.date.today()
-    stock.listing_date = daily_df["date"].iloc[0]
-    stock.ema_21d = _ema(closes, 21)
-    stock.ema_50d = _ema(closes, 50)
-    stock.ema_200d = _ema(closes, 200)
 
     weekly_rows = (
         db.query(WeeklyPrice)
@@ -397,6 +400,23 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
         .all()
     )
     stock.weeks_of_history = len(weekly_rows)
+
+    # ATH / 52W high / listing date come from the stored weekly bars (full history
+    # lives there); dates are week-precision -- the Monday of the week the high
+    # printed. A week's high is the max of its days' highs, so the values match
+    # what daily bars would give.
+    week_highs = [(wp.week_start, wp.high) for wp in weekly_rows if wp.high is not None]
+    if week_highs:
+        ath_week, ath_high = max(week_highs, key=lambda pair: pair[1])
+        stock.all_time_high = float(ath_high)
+        stock.all_time_high_date = ath_week
+        cutoff = week_highs[-1][0] - dt.timedelta(days=365)
+        recent = [(w, h) for w, h in week_highs if w >= cutoff]
+        w52_week, w52_high = max(recent, key=lambda pair: pair[1])
+        stock.week_52_high = float(w52_high)
+        stock.week_52_high_date = w52_week
+    if weekly_rows:
+        stock.listing_date = weekly_rows[0].week_start
 
     # Denormalized latest-week snapshot (keeps the screen endpoint off weekly_prices).
     stock.weekly_close = weekly_rows[-1].close if weekly_rows else None
@@ -453,7 +473,7 @@ def batch_upsert_stock_history(db: Session, stocks: list[Stock], chunk_size: int
                     db.rollback()
                     yield stock, exc
                 finally:
-                    # Drop flushed ORM objects (thousands of DailyPrice rows per stock)
+                    # Drop flushed ORM objects (hundreds of WeeklyPrice rows per stock)
                     # from the identity map so the session doesn't grow unboundedly.
                     db.expunge_all()
             del history_by_ticker

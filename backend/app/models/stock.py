@@ -26,7 +26,7 @@ class Stock(Base):
     avg_weekly_volume = Column(BigInteger, nullable=True)  # trailing 12-week average, liquidity floor
     cap_category = Column(String, nullable=True)  # "Large", "Mid", or "Small" -- rank-based (SEBI convention)
     weeks_of_history = Column(Integer, nullable=True)  # count of weekly bars, for the min-history filter
-    listing_date = Column(Date, nullable=True)  # proxy: earliest daily_prices.date (no true NSE listing-date source)
+    listing_date = Column(Date, nullable=True)  # proxy: earliest weekly bar's week_start (no true NSE listing-date source)
     ema_21d = Column(Float, nullable=True)
     ema_50d = Column(Float, nullable=True)
     ema_200d = Column(Float, nullable=True)
@@ -49,35 +49,15 @@ class Stock(Base):
     circuit_trap = Column(Boolean, nullable=True)
     circuit_trap_weeks = Column(Integer, nullable=True)  # length of the consecutive ~5% run
 
-    prices = relationship("DailyPrice", back_populates="stock", cascade="all, delete-orphan")
-
     __table_args__ = (
         UniqueConstraint("symbol", "exchange", name="uq_symbol_exchange"),
     )
 
 
-class DailyPrice(Base):
-    __tablename__ = "daily_prices"
-
-    id = Column(Integer, primary_key=True)
-    stock_id = Column(Integer, ForeignKey("stocks.id"), nullable=False)
-    date = Column(Date, nullable=False)
-    open = Column(Float, nullable=True)
-    high = Column(Float, nullable=True)
-    low = Column(Float, nullable=True)
-    close = Column(Float, nullable=True)
-    volume = Column(BigInteger, nullable=True)
-
-    stock = relationship("Stock", back_populates="prices")
-
-    __table_args__ = (
-        UniqueConstraint("stock_id", "date", name="uq_stock_date"),
-        Index("ix_daily_prices_stock_date", "stock_id", "date"),
-    )
-
-
 class WeeklyPrice(Base):
-    """Precomputed weekly bars (Monday-anchored, IST calendar week), derived from daily_prices."""
+    """Weekly bars (Monday-anchored, IST calendar week) -- the only stored price
+    history. Aggregated in memory from fetched daily bars at ingestion time; daily
+    bars themselves are never persisted (weekly-granularity decision, 2026-07-05)."""
     __tablename__ = "weekly_prices"
 
     id = Column(Integer, primary_key=True)

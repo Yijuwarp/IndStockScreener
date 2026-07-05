@@ -5,9 +5,10 @@ run the normal refresh locally against SQLite, then push the results with:
 
     python -m scripts.migrate_to_pg "<external postgres url from Render>"
 
-Copies all tables including daily_prices -- incremental ingestion computes ATH,
-EMAs, listing dates, and weekly bars from the stored dailies, so they must exist
-wherever ingestion runs. Target tables are truncated first so ids stay consistent.
+Weekly bars are the only stored price history (weekly-granularity decision,
+2026-07-05); daily bars are never persisted, so this copies stocks, weekly_prices,
+breakout_metrics, and the index tables. A leftover daily_prices table on the
+target is dropped. Target tables are truncated first so ids stay consistent.
 """
 import sqlite3
 import sys
@@ -44,10 +45,6 @@ TABLES: list[tuple[str, list[str]]] = [
         ["id", "stock_id", "week_start", "open", "high", "low", "close", "volume"],
     ),
     (
-        "daily_prices",
-        ["id", "stock_id", "date", "open", "high", "low", "close", "volume"],
-    ),
-    (
         "market_indexes",
         [
             "id", "code", "name", "yf_ticker", "current_price",
@@ -73,6 +70,9 @@ def main() -> None:
     src = sqlite3.connect(SQLITE_PATH)
     with psycopg.connect(pg_url) as dst:
         with dst.cursor() as cur:
+            # Weekly-only storage: reclaim the space if the target still has dailies.
+            cur.execute("DROP TABLE IF EXISTS daily_prices")
+
             for table, _ in reversed(TABLES):
                 cur.execute(f"TRUNCATE {table} CASCADE")
 
