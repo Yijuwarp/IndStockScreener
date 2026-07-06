@@ -895,3 +895,76 @@ td.warning {
   align-self: center;
   flex-shrink: 0;
 }
+
+/* ---------- Boot overlay ---------- */
+
+.boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-bg);
+}
+
+.boot-card {
+  width: 420px;
+  max-width: 90vw;
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-bg-alt);
+}
+
+.boot-card h1 {
+  margin: 0 0 20px;
+  font-size: 18px;
+  color: var(--text-bright);
+}
+
+.boot-steps {
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.boot-step {
+  display: flex;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.boot-step.active { color: var(--text-bright); }
+.boot-step.done { color: var(--accent); }
+
+.boot-step-marker {
+  width: 16px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.boot-step.active .boot-step-marker { animation: boot-pulse 1.2s ease-in-out infinite; }
+
+@keyframes boot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.boot-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.boot-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}

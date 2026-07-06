@@ -43,6 +43,36 @@ export interface Stock {
   pyramid_signal: boolean | null;
 }
 
+// Basis-dependent metric block from the bundle endpoint (one per basis).
+export interface BasisMetrics {
+  breakout_count: number | null;
+  breakout_week: string | null;
+  breakout_level: number | null;
+  consolidation_weeks: number | null;
+  consolidation_range_pct: number | null;
+  extension_pct: number | null;
+  breakout_age_weeks: number | null;
+  breakout_volume_ratio: number | null;
+  volume_dry_up: boolean | null;
+  has_resistance: boolean | null;
+  pyramid_signal: boolean | null;
+}
+
+// A stock as served by /stocks/bundle: common fields plus both bases' metrics.
+export type BundleStock = Omit<
+  Stock,
+  | "breakout_count" | "breakout_week" | "breakout_level" | "consolidation_weeks"
+  | "consolidation_range_pct" | "extension_pct" | "breakout_age_weeks"
+  | "breakout_volume_ratio" | "volume_dry_up" | "has_resistance" | "pyramid_signal"
+> & { ath: BasisMetrics; w52: BasisMetrics };
+
+export interface Bundle {
+  refreshing: boolean;
+  data_as_of: string | null;
+  indexes: MarketIndex[];
+  stocks: BundleStock[];
+}
+
 export interface MarketIndex {
   id: number;
   code: string;

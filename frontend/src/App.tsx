@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { RefreshStatus, ScreenerCriteria, Stock, MarketIndex } from "./types";
-import { getStatus, screenStocks, getIndexes } from "./api";
+import type { BundleStock, RefreshStatus, ScreenerCriteria, Stock, MarketIndex } from "./types";
+import { fetchBundle } from "./api";
+import { screenLocal } from "./screen";
 import { RangeFilterButton, type RangeField } from "./RangeFilter";
 import { SelectFilterButton } from "./SelectFilter";
 import { getJSONCookie, setJSONCookie } from "./cookies";
@@ -469,10 +470,17 @@ const PRESETS: { label: string; criteria: ScreenerCriteria }[] = [
 function App() {
   const [criteria, setCriteria] = useState<ScreenerCriteria>(DEFAULT_CRITERIA);
   const [results, setResults] = useState<Stock[]>([]);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<RefreshStatus | null>(null);
   const [indexes, setIndexes] = useState<MarketIndex[]>([]);
+
+  // The whole universe, fetched once per session from /stocks/bundle. Every
+  // filter change afterwards screens this in memory -- no further requests.
+  const [universe, setUniverse] = useState<BundleStock[] | null>(null);
+  const [bootPhase, setBootPhase] = useState<"booting" | "fetching" | "ready" | "done">("booting");
+  const [bootProgress, setBootProgress] = useState(0);
+  const [bootAttempt, setBootAttempt] = useState(1);
+  const loading = universe === null;
   const [indexPanelOpen, setIndexPanelOpen] = useState(false);
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
 
@@ -513,17 +521,15 @@ function App() {
   useEffect(() => setJSONCookie(COLUMN_VISIBLE_COOKIE, Array.from(visibleColumns)), [visibleColumns]);
   useEffect(() => setJSONCookie(WATCHLIST_COOKIE, watchlist), [watchlist]);
 
-  // Watchlist rows bypass all filters: fetched by explicit symbol list, only the
+  // Watchlist rows bypass all filters: selected by explicit symbol list, only the
   // basis follows the main screen so breakout columns stay comparable.
   useEffect(() => {
-    if (watchlist.length === 0) {
+    if (watchlist.length === 0 || !universe) {
       setWatchlistRows([]);
       return;
     }
-    screenStocks({ basis: criteria.basis, symbols: watchlist })
-      .then(setWatchlistRows)
-      .catch(() => {});
-  }, [watchlist, criteria.basis]);
+    setWatchlistRows(screenLocal(universe, { basis: criteria.basis, symbols: watchlist }));
+  }, [watchlist, criteria.basis, universe]);
 
   const toggleWatch = (symbol: string) => {
     setWatchlist((prev) =>
@@ -551,80 +557,55 @@ function App() {
     });
   };
 
-  // Poll fast only while a refresh is in flight; idle polling is just a heartbeat.
+  // One-shot boot: fetch the bundle (retrying through the free-tier cold start),
+  // then never talk to the backend again for the rest of the session.
   useEffect(() => {
-    let timer: number | undefined;
     let cancelled = false;
-    const poll = () => {
-      getStatus()
-        .then((st) => {
+    const load = (attempt: number) => {
+      setBootAttempt(attempt);
+      fetchBundle((pct) => {
+        if (cancelled) return;
+        setBootPhase("fetching");
+        setBootProgress(pct);
+      })
+        .then((bundle) => {
           if (cancelled) return;
-          setStatus(st);
-          timer = window.setTimeout(poll, st.refreshing ? 5000 : 30000);
+          setStatus({ refreshing: bundle.refreshing, data_as_of: bundle.data_as_of });
+          setIndexes(bundle.indexes);
+          setUniverse(bundle.stocks);
+          setError(null);
+          setBootPhase("ready");
+          window.setTimeout(() => {
+            if (!cancelled) setBootPhase("done");
+          }, 700);
         })
         .catch(() => {
-          if (!cancelled) timer = window.setTimeout(poll, 30000);
+          // A network error usually means the free-tier backend is cold-starting;
+          // an HTTP error is worth retrying too. Keep the boot screen honest.
+          if (cancelled) return;
+          setBootPhase("booting");
+          window.setTimeout(() => {
+            if (!cancelled) load(attempt + 1);
+          }, 8000);
         });
     };
-    poll();
+    load(1);
     return () => {
       cancelled = true;
-      if (timer !== undefined) clearTimeout(timer);
     };
   }, []);
 
-  useEffect(() => {
-    getIndexes().then(setIndexes).catch(() => {});
-  }, []);
-
-  const wakeRetries = useRef(0);
-  const requestSequence = useRef(0);
-  const retryTimer = useRef<number | undefined>(undefined);
-  const MAX_WAKE_RETRIES = 15; // ~2 min, covers a Render free-tier cold start
-
-  const runScreen = async (c: ScreenerCriteria, isRetry = false) => {
-    if (!isRetry) {
-      wakeRetries.current = 0;
-      if (retryTimer.current !== undefined) clearTimeout(retryTimer.current);
-    }
-    const requestId = ++requestSequence.current;
-    let retryScheduled = false;
-    setLoading(true);
-    setError(null);
-    try {
-      const rows = await screenStocks(c);
-      if (requestId !== requestSequence.current) return;
-      setResults(rows);
-      wakeRetries.current = 0;
-    } catch (err) {
-      if (requestId !== requestSequence.current) return;
-      // A network error with no data yet usually means the free-tier backend is
-      // cold-starting -- keep retrying quietly instead of showing a dead page.
-      const isNetworkError = err instanceof TypeError;
-      if (isNetworkError && wakeRetries.current < MAX_WAKE_RETRIES) {
-        wakeRetries.current += 1;
-        setError("Backend is waking up (free hosting spins down when idle) — retrying…");
-        retryScheduled = true;
-        retryTimer.current = window.setTimeout(() => runScreen(c, true), 8000);
-        return; // keep the loading state visible while we wait
-      }
-      setError(String(err));
-    } finally {
-      if (requestId === requestSequence.current && !retryScheduled) setLoading(false);
-    }
+  const runScreen = (c: ScreenerCriteria, rows: BundleStock[] | null = universe) => {
+    if (rows) setResults(screenLocal(rows, c));
   };
 
-  useEffect(() => () => {
-    requestSequence.current += 1;
-    if (retryTimer.current !== undefined) clearTimeout(retryTimer.current);
-  }, []);
-
+  // First screen as soon as the universe lands.
   useEffect(() => {
-    runScreen(criteria);
+    if (universe) runScreen(criteria, universe);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [universe]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     runScreen(criteria);
   };
@@ -669,18 +650,12 @@ function App() {
   const sortedResults = useMemo(() => sortRows(results, sort), [results, sort]);
   const sortedWatchlist = useMemo(() => sortRows(watchlistRows, sort), [watchlistRows, sort]);
 
-  // Full universe, fetched lazily on first search and cached per basis, so search
-  // can also surface stocks that the current filters exclude.
-  const [allStocks, setAllStocks] = useState<{ basis: string; rows: Stock[] } | null>(null);
-  useEffect(() => {
-    if (!searchQuery.trim()) return;
-    const basis = criteria.basis ?? "ATH";
-    if (allStocks && allStocks.basis === basis) return;
-    screenStocks({ basis })
-      .then((rows) => setAllStocks({ basis, rows }))
-      .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, criteria.basis]);
+  // Full universe flattened for the current basis, so search can also surface
+  // stocks that the current filters exclude. Derived from the bundle in memory.
+  const allStocks = useMemo(
+    () => (universe ? { basis: criteria.basis ?? "ATH", rows: screenLocal(universe, { basis: criteria.basis }) } : null),
+    [universe, criteria.basis]
+  );
 
   const isAth = criteria.basis !== "52W";
 
@@ -965,8 +940,48 @@ function App() {
     );
   };
 
+  const bootSteps: { label: string; state: "done" | "active" | "pending" }[] = [
+    {
+      label: bootAttempt > 1
+        ? `Waiting on the backend to boot (attempt ${bootAttempt}) — free hosting spins down when idle`
+        : "Waiting on the backend to boot",
+      state: bootPhase === "booting" ? "active" : "done",
+    },
+    {
+      label: bootPhase === "fetching" ? `Fetching stock universe — ${bootProgress}%` : "Fetching stock universe",
+      state: bootPhase === "booting" ? "pending" : bootPhase === "fetching" ? "active" : "done",
+    },
+    {
+      label: "Ready!",
+      state: bootPhase === "ready" || bootPhase === "done" ? "done" : "pending",
+    },
+  ];
+
   return (
     <div className="screener">
+      {bootPhase !== "done" && (
+        <div className="boot-overlay">
+          <div className="boot-card">
+            <h1>Momentum Stock Screener</h1>
+            <ul className="boot-steps">
+              {bootSteps.map((s, i) => (
+                <li key={i} className={`boot-step ${s.state}`}>
+                  <span className="boot-step-marker">
+                    {s.state === "done" ? "✓" : s.state === "active" ? "●" : "○"}
+                  </span>
+                  {s.label}
+                </li>
+              ))}
+            </ul>
+            <div className="boot-progress-track">
+              <div
+                className="boot-progress-fill"
+                style={{ width: `${bootPhase === "booting" ? 0 : bootPhase === "fetching" ? bootProgress : 100}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
       <div className="topbar">
         <h1>Momentum Stock Screener</h1>
         <div className="basis-toggle">

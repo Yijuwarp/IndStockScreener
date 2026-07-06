@@ -61,8 +61,13 @@ long-lookback ATR) would need refetching from yfinance rather than reading the D
 - SQLite (`DATABASE_URL=sqlite:///./test.db`) is fine for local/single-user use. For multi-user
   hosting switch to PostgreSQL (`DATABASE_URL=postgresql+psycopg://...`) — SQLite allows only one
   writer, and the daily refresh job is a long-running writer that will contend with user requests.
-- Responses are gzip-compressed and the screen endpoint reads only the denormalized `stocks`
-  table, so a small VPS (1-2 vCPU) handles dozens of concurrent users.
+- The backend serves each frontend session exactly once: on load the client fetches
+  `GET /stocks/bundle` (the whole universe with both bases' metrics + indexes + refresh status,
+  ~630 KB gzipped) behind a staged boot screen, and every subsequent filter/preset/search/watchlist
+  interaction screens that payload in the browser (`frontend/src/screen.ts` mirrors the backend's
+  `screen_stocks` semantics). No further requests, so free-tier cold starts are paid once per session.
+- Responses are gzip-compressed and the bundle reads only the denormalized `stocks` and
+  `breakout_metrics` tables, so a small VPS (1-2 vCPU) handles dozens of concurrent users.
 
 ## Next steps
 - Schedule `run_ingestion` to run daily (e.g. via APScheduler or a cron job).
