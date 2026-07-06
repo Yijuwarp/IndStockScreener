@@ -467,6 +467,10 @@ const PRESETS: { label: string; criteria: ScreenerCriteria }[] = [
   { label: "Tight base", criteria: { ...DEFAULT_CRITERIA, min_consolidation_weeks: 6, max_consolidation_range_pct: 15 } },
 ];
 
+type BootPhase = "booting" | "fetching" | "ready" | "done";
+const BOOT_ORDER: BootPhase[] = ["booting", "fetching", "ready", "done"];
+const BOOT_STEP_HOLD_MS = 500; // minimum time each boot step stays on screen
+
 function App() {
   const [criteria, setCriteria] = useState<ScreenerCriteria>(DEFAULT_CRITERIA);
   const [results, setResults] = useState<Stock[]>([]);
@@ -477,10 +481,33 @@ function App() {
   // The whole universe, fetched once per session from /stocks/bundle. Every
   // filter change afterwards screens this in memory -- no further requests.
   const [universe, setUniverse] = useState<BundleStock[] | null>(null);
-  const [bootPhase, setBootPhase] = useState<"booting" | "fetching" | "ready" | "done">("booting");
+  const [bootPhase, setBootPhase] = useState<BootPhase>("booting");
   const [bootProgress, setBootProgress] = useState(0);
   const [bootAttempt, setBootAttempt] = useState(1);
   const loading = universe === null;
+
+  // What the boot screen displays. The real phase advances as fast as the fetch
+  // allows; the shown phase trails it one step at a time, holding each step at
+  // least 500ms so the user can read the sequence. On a retry (phase regresses)
+  // it snaps back immediately.
+  const [shownPhase, setShownPhase] = useState<BootPhase>("booting");
+  const lastStepShownAt = useRef(Date.now());
+  useEffect(() => {
+    const actual = BOOT_ORDER.indexOf(bootPhase);
+    const shown = BOOT_ORDER.indexOf(shownPhase);
+    if (actual < shown) {
+      lastStepShownAt.current = Date.now();
+      setShownPhase(bootPhase);
+      return;
+    }
+    if (actual === shown) return;
+    const wait = Math.max(0, BOOT_STEP_HOLD_MS - (Date.now() - lastStepShownAt.current));
+    const timer = window.setTimeout(() => {
+      lastStepShownAt.current = Date.now();
+      setShownPhase(BOOT_ORDER[shown + 1]);
+    }, wait);
+    return () => clearTimeout(timer);
+  }, [bootPhase, shownPhase]);
   const [indexPanelOpen, setIndexPanelOpen] = useState(false);
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
 
@@ -574,10 +601,8 @@ function App() {
           setIndexes(bundle.indexes);
           setUniverse(bundle.stocks);
           setError(null);
-          setBootPhase("ready");
-          window.setTimeout(() => {
-            if (!cancelled) setBootPhase("done");
-          }, 700);
+          // The shown phase walks the remaining steps at its own pace.
+          setBootPhase("done");
         })
         .catch(() => {
           // A network error usually means the free-tier backend is cold-starting;
@@ -945,21 +970,21 @@ function App() {
       label: bootAttempt > 1
         ? `Waiting on the backend to boot (attempt ${bootAttempt}) — free hosting spins down when idle`
         : "Waiting on the backend to boot",
-      state: bootPhase === "booting" ? "active" : "done",
+      state: shownPhase === "booting" ? "active" : "done",
     },
     {
-      label: bootPhase === "fetching" ? `Fetching stock universe — ${bootProgress}%` : "Fetching stock universe",
-      state: bootPhase === "booting" ? "pending" : bootPhase === "fetching" ? "active" : "done",
+      label: shownPhase === "fetching" ? `Fetching stock universe — ${bootProgress}%` : "Fetching stock universe",
+      state: shownPhase === "booting" ? "pending" : shownPhase === "fetching" ? "active" : "done",
     },
     {
       label: "Ready!",
-      state: bootPhase === "ready" || bootPhase === "done" ? "done" : "pending",
+      state: shownPhase === "ready" || shownPhase === "done" ? "done" : "pending",
     },
   ];
 
   return (
     <div className="screener">
-      {bootPhase !== "done" && (
+      {shownPhase !== "done" && (
         <div className="boot-overlay">
           <div className="boot-card">
             <h1>Momentum Stock Screener</h1>
@@ -976,7 +1001,7 @@ function App() {
             <div className="boot-progress-track">
               <div
                 className="boot-progress-fill"
-                style={{ width: `${bootPhase === "booting" ? 0 : bootPhase === "fetching" ? bootProgress : 100}%` }}
+                style={{ width: `${shownPhase === "booting" ? 0 : shownPhase === "fetching" ? bootProgress : 100}%` }}
               />
             </div>
           </div>
