@@ -5,6 +5,7 @@ NSE holiday calendar -- a holiday just costs one redundant, harmless
 refresh that finds no new data.
 """
 import datetime as dt
+import os
 import threading
 
 from app.db.session import SessionLocal
@@ -80,6 +81,12 @@ def check_and_refresh() -> None:
 
     with status.lock:
         status.data_as_of = oldest
+
+    # Hosted deploys set DISABLE_SELF_REFRESH: the GitHub Actions workflow owns
+    # ingestion there (Yahoo rate-limits datacenter IPs, so refreshing from the
+    # web service is slow-to-futile and pins status.refreshing for hours).
+    if os.environ.get("DISABLE_SELF_REFRESH"):
+        return
 
     cutoff = most_recent_weekday(dt.date.today())
     # Many never-updated stocks means a fresh deploy or a refresh that died partway

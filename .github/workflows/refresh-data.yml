@@ -13,6 +13,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: write  # the job commits the exported bundle.json
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
@@ -39,4 +42,23 @@ jobs:
             python -m scripts.run_ingestion --full
           else
             python -m scripts.run_ingestion
+          fi
+
+      # Publish the refreshed data as a static file: Vercel redeploys on the push
+      # and serves it from the CDN, so frontends never hit the backend to load.
+      - name: Export and publish bundle.json
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python -m scripts.export_bundle ../frontend/public/bundle.json
+          cd ..
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add frontend/public/bundle.json
+          if git diff --cached --quiet; then
+            echo "bundle unchanged; nothing to publish"
+          else
+            git commit -m "Publish data bundle ($(date -u +%F))"
+            git pull --rebase origin master
+            git push origin master
           fi

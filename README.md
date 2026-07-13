@@ -61,11 +61,18 @@ long-lookback ATR) would need refetching from yfinance rather than reading the D
 - SQLite (`DATABASE_URL=sqlite:///./test.db`) is fine for local/single-user use. For multi-user
   hosting switch to PostgreSQL (`DATABASE_URL=postgresql+psycopg://...`) — SQLite allows only one
   writer, and the daily refresh job is a long-running writer that will contend with user requests.
-- The backend serves each frontend session exactly once: on load the client fetches
-  `GET /stocks/bundle` (the whole universe with both bases' metrics + indexes + refresh status,
-  ~630 KB gzipped) behind a staged boot screen, and every subsequent filter/preset/search/watchlist
-  interaction screens that payload in the browser (`frontend/src/screen.ts` mirrors the backend's
-  `screen_stocks` semantics). No further requests, so free-tier cold starts are paid once per session.
+- The read path is static: after each ingestion run the GitHub Actions workflow exports the
+  session bundle (whole universe with both bases' metrics + indexes + freshness, ~630 KB gzipped)
+  to `frontend/public/bundle.json` and commits it, so Vercel redeploys and serves it from the CDN.
+  Production frontends load that file — the Render backend is not in the read path at all (no
+  cold starts); `GET /stocks/bundle` remains as a fallback and for local dev.
+- The browser caches the bundle in IndexedDB keyed by `data_as_of`: refreshes and repeat visits
+  hydrate instantly with no boot screen, then revalidate in the background and swap in silently
+  when newer data exists. First-ever visits see a staged boot screen with fetch progress.
+- Every filter/preset/search/watchlist interaction screens the in-memory payload
+  (`frontend/src/screen.ts` mirrors the backend's `screen_stocks` semantics) — zero requests.
+- Render sets `DISABLE_SELF_REFRESH=1`: ingestion belongs to the GitHub Actions workflow
+  (Yahoo rate-limits datacenter IPs), so the web service never tries to refresh data itself.
 - Responses are gzip-compressed and the bundle reads only the denormalized `stocks` and
   `breakout_metrics` tables, so a small VPS (1-2 vCPU) handles dozens of concurrent users.
 

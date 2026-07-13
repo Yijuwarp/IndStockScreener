@@ -27,9 +27,27 @@ export function fetchBundle(onProgress: (pct: number) => void): Promise<Bundle> 
   return inFlight;
 }
 
-async function fetchBundleOnce(onProgress: (pct: number) => void): Promise<Bundle> {
+// In production the data-refresh workflow publishes bundle.json into the Vercel
+// deploy, so the CDN copy (same-origin, no cold start) is tried first; the
+// backend endpoint is the fallback. Dev always uses the local backend so the
+// app reflects the local DB. A SPA rewrite can answer a missing static file
+// with index.html, so a non-JSON content type also falls through.
+async function openBundleResponse(): Promise<Response> {
+  if (import.meta.env.PROD) {
+    try {
+      const res = await fetch("/bundle.json");
+      if (res.ok && (res.headers.get("content-type") ?? "").includes("json")) return res;
+    } catch {
+      // fall through to the API
+    }
+  }
   const res = await fetch(`${API_BASE}/stocks/bundle`);
   if (!res.ok) throw new Error(`Bundle request failed: ${res.status}`);
+  return res;
+}
+
+async function fetchBundleOnce(onProgress: (pct: number) => void): Promise<Bundle> {
+  const res = await openBundleResponse();
   onProgress(0);
 
   if (!res.body) return res.json();

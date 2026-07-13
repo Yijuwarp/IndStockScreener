@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { BundleStock, RefreshStatus, ScreenerCriteria, Stock, MarketIndex } from "./types";
 import { fetchBundle } from "./api";
+import { loadCachedBundle, saveCachedBundle } from "./cache";
 import { screenLocal } from "./screen";
 import { RangeFilterButton, type RangeField } from "./RangeFilter";
 import { SelectFilterButton } from "./SelectFilter";
@@ -491,6 +492,9 @@ function App() {
   // least 500ms so the user can read the sequence. On a retry (phase regresses)
   // it snaps back immediately.
   const [shownPhase, setShownPhase] = useState<BootPhase>("booting");
+  // Don't paint the boot screen until the cache lookup resolves -- a cached
+  // refresh should show the app immediately, not a one-frame overlay flash.
+  const [cacheChecked, setCacheChecked] = useState(false);
   const lastStepShownAt = useRef(Date.now());
   useEffect(() => {
     const actual = BOOT_ORDER.indexOf(bootPhase);
@@ -584,37 +588,59 @@ function App() {
     });
   };
 
-  // One-shot boot: fetch the bundle (retrying through the free-tier cold start),
-  // then never talk to the backend again for the rest of the session.
+  // One-shot boot. Refreshes hydrate instantly from the IndexedDB cache (no boot
+  // screen), then the network copy revalidates in the background and swaps in
+  // silently if the data is newer. First-ever visits fetch with the boot screen
+  // (retrying through the free-tier cold start). Either way the session never
+  // talks to the network again after one successful bundle load.
   useEffect(() => {
     let cancelled = false;
+    let cachedAsOf: string | null | undefined;
+
+    const applyBundle = (bundle: Awaited<ReturnType<typeof fetchBundle>>) => {
+      setStatus({ refreshing: bundle.refreshing, data_as_of: bundle.data_as_of });
+      setIndexes(bundle.indexes);
+      setUniverse(bundle.stocks);
+    };
+
     const load = (attempt: number) => {
       setBootAttempt(attempt);
       fetchBundle((pct) => {
-        if (cancelled) return;
+        if (cancelled || cachedAsOf !== undefined) return;
         setBootPhase("fetching");
         setBootProgress(pct);
       })
         .then((bundle) => {
           if (cancelled) return;
-          setStatus({ refreshing: bundle.refreshing, data_as_of: bundle.data_as_of });
-          setIndexes(bundle.indexes);
-          setUniverse(bundle.stocks);
+          // Don't clobber an already-hydrated cache with identical data.
+          if (cachedAsOf === undefined || bundle.data_as_of !== cachedAsOf) applyBundle(bundle);
           setError(null);
-          // The shown phase walks the remaining steps at its own pace.
-          setBootPhase("done");
+          setBootPhase("done"); // shown phase walks any remaining steps at its own pace
+          void saveCachedBundle(bundle);
         })
         .catch(() => {
           // A network error usually means the free-tier backend is cold-starting;
           // an HTTP error is worth retrying too. Keep the boot screen honest.
           if (cancelled) return;
-          setBootPhase("booting");
+          if (cachedAsOf === undefined) setBootPhase("booting");
           window.setTimeout(() => {
             if (!cancelled) load(attempt + 1);
           }, 8000);
         });
     };
-    load(1);
+
+    loadCachedBundle().then((cached) => {
+      if (cancelled) return;
+      if (cached) {
+        cachedAsOf = cached.data_as_of;
+        applyBundle(cached);
+        setBootPhase("done");
+        setShownPhase("done"); // skip the boot screen entirely on a cache hit
+      }
+      setCacheChecked(true);
+      load(1);
+    });
+
     return () => {
       cancelled = true;
     };
@@ -984,7 +1010,7 @@ function App() {
 
   return (
     <div className="screener">
-      {shownPhase !== "done" && (
+      {cacheChecked && shownPhase !== "done" && (
         <div className="boot-overlay">
           <div className="boot-card">
             <h1>Momentum Stock Screener</h1>
