@@ -160,6 +160,88 @@ def _update_avg_weekly_volume(stock: Stock, weekly_rows: list[WeeklyPrice]) -> N
     stock.avg_weekly_volume = int(sum(recent) / len(recent)) if recent else None
 
 
+EXTENDED_PCT = 20.0  # course: >20% above the breakout level -- "let it go"
+HARD_STOP_FRACTION = 0.8  # course: 20% hard stoploss, referenced to the breakout level
+BOX_FORM_WEEKS = 4  # course: Darvas box, length 4
+
+
+def _breakout_status(
+    weekly_rows: list[WeeklyPrice],
+    breakout_idx: int,
+    level: float,
+    current_price: float | None,
+) -> tuple[str, str, float | None, float | None]:
+    """Lifecycle of the latest breakout event (docs/SPEC-breakout-lifecycle.md §3).
+
+    Returns (status, reason, box_high, box_floor). Walks the weekly bars from the
+    breakout week forward, tracking the historical 10-week EMA (an exit close two
+    months ago kills the event even if price recovered -- "ended" is sticky), the
+    post-breakout high, and Darvas-box formation/dissolution.
+    """
+    closes = [wp.close for wp in weekly_rows]
+    # Seed the 10W EMA from the full close history up to and including the breakout
+    # week, matching how ema_10w is computed for the exit signal.
+    k = 2 / 11
+    ema10: float | None = None
+    for c in closes[: breakout_idx + 1]:
+        if c is None:
+            continue
+        ema10 = c if ema10 is None else c * k + ema10 * (1 - k)
+
+    hard_stop = HARD_STOP_FRACTION * level
+    post_high = weekly_rows[breakout_idx].high or level
+    post_high_idx = breakout_idx
+    # Box state: floor is set from the first BOX_FORM_WEEKS base bars once they
+    # accumulate; a weekly close below the floor dissolves the box, and formation
+    # restarts from the bar after the dissolution.
+    form_start = breakout_idx  # base bars are those strictly after this index
+    box_floor: float | None = None
+
+    for idx in range(breakout_idx + 1, len(weekly_rows)):
+        wp = weekly_rows[idx]
+        if wp.close is None:
+            continue
+        if ema10 is not None:
+            ema10 = wp.close * k + ema10 * (1 - k)
+            if wp.close < ema10:
+                return "ended", f"close_below_10w_ema:{wp.week_start}", None, None
+        if wp.close <= hard_stop:
+            return "ended", f"hard_stop:{wp.week_start}", None, None
+
+        if wp.high is not None and wp.high > post_high:
+            post_high = wp.high
+            post_high_idx = idx
+            form_start = idx
+            box_floor = None
+            continue
+
+        if box_floor is None and idx - form_start >= BOX_FORM_WEEKS:
+            window = weekly_rows[form_start + 1 : form_start + 1 + BOX_FORM_WEEKS]
+            lows = [w.low for w in window if w.low is not None]
+            box_floor = min(lows) if lows else None
+        if box_floor is not None and wp.close < box_floor:
+            box_floor = None
+            form_start = idx  # box dissolved; a fresh one needs 4 new quiet weeks
+
+    extension = (
+        (current_price - level) / level * 100
+        if current_price is not None and level
+        else None
+    )
+    if extension is not None and extension > EXTENDED_PCT and current_price > level:
+        return "extended", f"extension:{extension:.1f}", None, None
+    if box_floor is not None:
+        base_weeks = len(weekly_rows) - 1 - post_high_idx
+        return (
+            "basing",
+            f"box:{base_weeks}w {box_floor:.2f}-{post_high:.2f}",
+            post_high,
+            box_floor,
+        )
+    ext_text = f"{extension:.1f}" if extension is not None else "n/a"
+    return "active", f"extension:{ext_text}", None, None
+
+
 def _upsert_breakout_metrics(db: Session, stock: Stock, basis: str, weekly_rows: list[WeeklyPrice]) -> None:
     """Recompute breakout metrics for the given basis ("ATH" or "52W") from this stock's weekly bars."""
     by_week = {wp.week_start: wp for wp in weekly_rows}
@@ -227,6 +309,10 @@ def _upsert_breakout_metrics(db: Session, stock: Stock, basis: str, weekly_rows:
             bm.volume_dry_up = avg_baseline > 0 and avg_recent < DRY_UP_THRESHOLD * avg_baseline
         else:
             bm.volume_dry_up = None
+
+        bm.status, bm.status_reason, bm.box_high, bm.box_floor = _breakout_status(
+            weekly_rows, breakout_idx, latest.level, stock.current_price
+        )
     else:
         bm.breakout_week = None
         bm.breakout_level = None
@@ -236,6 +322,10 @@ def _upsert_breakout_metrics(db: Session, stock: Stock, basis: str, weekly_rows:
         bm.breakout_age_weeks = None
         bm.breakout_volume_ratio = None
         bm.volume_dry_up = None
+        bm.status = None
+        bm.status_reason = None
+        bm.box_high = None
+        bm.box_floor = None
 
 
 BATCH_CHUNK_SIZE = 30  # modest: each chunk's full-history download must fit in a 512MB instance
@@ -437,6 +527,7 @@ def upsert_stock_history(db: Session, stock: Stock, hist: pd.DataFrame | None = 
 
     weekly_closes = pd.Series([wp.close for wp in weekly_rows if wp.close is not None])
     stock.ema_10w = _ema(weekly_closes, 10)
+    stock.ema_13w = _ema(weekly_closes, 13)
     stock.circuit_trap, stock.circuit_trap_weeks = _detect_circuit_trap(weekly_rows)
     _update_avg_weekly_volume(stock, weekly_rows)
     _upsert_breakout_metrics(db, stock, "ATH", weekly_rows)

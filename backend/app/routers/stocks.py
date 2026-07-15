@@ -36,6 +36,10 @@ def attach_breakout_fields(db: Session, stocks: list[Stock], basis: str = "ATH")
         stock.breakout_age_weeks = bm.breakout_age_weeks if bm else None
         stock.breakout_volume_ratio = bm.breakout_volume_ratio if bm else None
         stock.volume_dry_up = bm.volume_dry_up if bm else None
+        stock.status = bm.status if bm else None
+        stock.status_reason = bm.status_reason if bm else None
+        stock.box_high = bm.box_high if bm else None
+        stock.box_floor = bm.box_floor if bm else None
 
     return stocks
 

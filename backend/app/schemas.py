@@ -37,8 +37,13 @@ class StockOut(BaseModel):
     ema_50d: Optional[float] = None
     ema_200d: Optional[float] = None
     ema_10w: Optional[float] = None
+    ema_13w: Optional[float] = None
     has_resistance: Optional[bool] = None
     volume_dry_up: Optional[bool] = None
+    status: Optional[str] = None
+    status_reason: Optional[str] = None
+    box_high: Optional[float] = None
+    box_floor: Optional[float] = None
     sector: Optional[str] = None
     industry: Optional[str] = None
     revenue_growth: Optional[float] = None
@@ -80,6 +85,11 @@ class BasisMetricsOut(BaseModel):
     volume_dry_up: Optional[bool] = None
     has_resistance: Optional[bool] = None  # 52W basis only
     pyramid_signal: Optional[bool] = None
+    # Lifecycle of the latest breakout (docs/SPEC-breakout-lifecycle.md)
+    status: Optional[str] = None  # active / extended / basing / ended
+    status_reason: Optional[str] = None
+    box_high: Optional[float] = None
+    box_floor: Optional[float] = None
 
 
 class BundleStockOut(BaseModel):
@@ -108,6 +118,7 @@ class BundleStockOut(BaseModel):
     ema_50d: Optional[float] = None
     ema_200d: Optional[float] = None
     ema_10w: Optional[float] = None
+    ema_13w: Optional[float] = None
     sector: Optional[str] = None
     industry: Optional[str] = None
     revenue_growth: Optional[float] = None

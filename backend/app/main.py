@@ -27,18 +27,28 @@ app.include_router(indexes.router)
 
 
 # dev-mode migration: create_all doesn't add columns to existing tables, so
-# backfill any newly-declared stocks columns with ALTER TABLE.
-_NEW_STOCK_COLUMNS = {
-    "ema_10w": "FLOAT",
-    "sector": "VARCHAR",
-    "industry": "VARCHAR",
-    "revenue_growth": "FLOAT",
-    "earnings_growth": "FLOAT",
-    "circuit_trap": "BOOLEAN",
-    "circuit_trap_weeks": "INTEGER",
-    "weekly_close": "FLOAT",
-    "weekly_volume": "BIGINT",
-    "weekly_pct_change": "FLOAT",
+# backfill any newly-declared columns with ALTER TABLE, per table.
+_NEW_COLUMNS: dict[str, dict[str, str]] = {
+    "stocks": {
+        "ema_10w": "FLOAT",
+        "sector": "VARCHAR",
+        "industry": "VARCHAR",
+        "revenue_growth": "FLOAT",
+        "earnings_growth": "FLOAT",
+        "circuit_trap": "BOOLEAN",
+        "circuit_trap_weeks": "INTEGER",
+        "weekly_close": "FLOAT",
+        "weekly_volume": "BIGINT",
+        "weekly_pct_change": "FLOAT",
+        "ema_13w": "FLOAT",
+    },
+    # Breakout lifecycle (docs/SPEC-breakout-lifecycle.md)
+    "breakout_metrics": {
+        "status": "VARCHAR",
+        "status_reason": "VARCHAR",
+        "box_high": "FLOAT",
+        "box_floor": "FLOAT",
+    },
 }
 
 # One-time backfill of the denormalized weekly snapshot from weekly_prices, so the
@@ -65,12 +75,15 @@ UPDATE stocks SET
 
 
 def _migrate_new_columns():
-    existing = {c["name"] for c in inspect(engine).get_columns("stocks")}
-    backfill_weekly = "weekly_close" not in existing
+    inspector = inspect(engine)
+    stocks_existing = {c["name"] for c in inspector.get_columns("stocks")}
+    backfill_weekly = "weekly_close" not in stocks_existing
     with engine.begin() as conn:
-        for name, sql_type in _NEW_STOCK_COLUMNS.items():
-            if name not in existing:
-                conn.execute(text(f"ALTER TABLE stocks ADD COLUMN {name} {sql_type}"))
+        for table, columns in _NEW_COLUMNS.items():
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            for name, sql_type in columns.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
         if backfill_weekly:
             conn.execute(text(_WEEKLY_BACKFILL_SQL))
 

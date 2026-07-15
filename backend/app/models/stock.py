@@ -31,6 +31,7 @@ class Stock(Base):
     ema_50d = Column(Float, nullable=True)
     ema_200d = Column(Float, nullable=True)
     ema_10w = Column(Float, nullable=True)  # 10-week EMA of weekly closes (course stoploss line)
+    ema_13w = Column(Float, nullable=True)  # 13-week EMA (course trailing stop after a 100% gain)
 
     # Latest-week snapshot, denormalized from weekly_prices at ingestion time so the
     # screen endpoint never has to touch that (large) table.
@@ -97,6 +98,13 @@ class BreakoutMetrics(Base):
     breakout_age_weeks = Column(Integer, nullable=True)  # weeks since breakout_week
     breakout_volume_ratio = Column(Float, nullable=True)  # breakout week volume / trailing 12-wk avg before it
     volume_dry_up = Column(Boolean, nullable=True)  # avg(vol, last 3wk before breakout) < 70% of avg(vol, trailing 10wk)
+
+    # Lifecycle of the latest breakout (docs/SPEC-breakout-lifecycle.md):
+    # active / extended / basing / ended; NULL when the stock has no event.
+    status = Column(String, nullable=True)
+    status_reason = Column(String, nullable=True)  # machine text for the UI tooltip
+    box_high = Column(Float, nullable=True)  # Darvas box top while status == "basing"
+    box_floor = Column(Float, nullable=True)  # Darvas box floor while status == "basing"
 
     stock = relationship("Stock")
 

@@ -16,6 +16,7 @@ _BASIS_METRIC_FIELDS = (
     "breakout_count", "breakout_week", "breakout_level", "consolidation_weeks",
     "consolidation_range_pct", "extension_pct", "breakout_age_weeks",
     "breakout_volume_ratio", "volume_dry_up",
+    "status", "status_reason", "box_high", "box_floor",
 )
 
 _BUNDLE_STOCK_FIELDS = (
@@ -23,7 +24,7 @@ _BUNDLE_STOCK_FIELDS = (
     "market_cap", "all_time_high", "all_time_high_date", "week_52_high",
     "week_52_high_date", "last_updated", "weekly_close", "weekly_volume",
     "weekly_pct_change", "avg_weekly_volume", "cap_category", "weeks_of_history",
-    "listing_date", "ema_21d", "ema_50d", "ema_200d", "ema_10w", "sector",
+    "listing_date", "ema_21d", "ema_50d", "ema_200d", "ema_10w", "ema_13w", "sector",
     "industry", "revenue_growth", "earnings_growth", "circuit_trap",
     "circuit_trap_weeks",
 )
