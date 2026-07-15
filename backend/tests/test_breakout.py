@@ -2,7 +2,7 @@ import datetime as dt
 import random
 import unittest
 
-from app.services.breakout import BreakoutEvent, detect_breakouts, PULLBACK_PCT
+from app.services.breakout import BOX_WEEKS, BreakoutEvent, detect_breakouts, PULLBACK_PCT
 
 
 def detect_breakouts_naive(weekly_bars, basis="ATH", pullback_pct=PULLBACK_PCT):
@@ -23,7 +23,8 @@ def detect_breakouts_naive(weekly_bars, basis="ATH", pullback_pct=PULLBACK_PCT):
         if not base or close <= level:
             continue
         trough = min(bar[2] for bar in base)
-        if (level - trough) / level * 100 >= pullback_pct:
+        pulled_back = (level - trough) / level * 100 >= pullback_pct
+        if pulled_back or len(base) >= BOX_WEEKS:
             events.append(BreakoutEvent(week_start, level, weekly_bars[peak_index][0]))
     return events
 
@@ -48,6 +49,30 @@ class BreakoutDetectionTests(unittest.TestCase):
     def test_52w_breakout_uses_real_price_bars(self):
         rows = [bar(0, 100, 95, 98), bar(1, 95, 75, 80), bar(2, 101, 90, 100.5)]
         self.assertEqual(len(detect_breakouts(rows, basis="52W")), 1)
+
+    def test_box_rebreakout_without_pullback_fires(self):
+        # peak at 100, then 4 completed weeks basing shallowly (only ~5% deep --
+        # no 15% pullback), then a weekly close above the peak: the course's
+        # Darvas-box base makes this a new event.
+        rows = [bar(0, 100, 95, 98)]
+        rows += [bar(w, 98, 95, 96) for w in range(1, 5)]
+        rows.append(bar(5, 103, 97, 102))
+        events = detect_breakouts(rows, basis="ATH")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].level, 100)
+
+    def test_three_week_pause_is_not_a_box(self):
+        rows = [bar(0, 100, 95, 98)]
+        rows += [bar(w, 98, 95, 96) for w in range(1, 4)]  # only 3 base weeks
+        rows.append(bar(4, 103, 97, 102))
+        self.assertEqual(detect_breakouts(rows, basis="ATH"), [])
+
+    def test_overlapping_pullback_and_box_fire_one_event(self):
+        # deep pullback AND >=4 base weeks -- still exactly one event on the break
+        rows = [bar(0, 100, 95, 98)]
+        rows += [bar(w, 90, 78, 85) for w in range(1, 6)]
+        rows.append(bar(6, 104, 96, 101))
+        self.assertEqual(len(detect_breakouts(rows, basis="ATH")), 1)
 
     def test_matches_naive_reference_on_random_walks(self):
         rng = random.Random(42)

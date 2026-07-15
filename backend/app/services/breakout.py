@@ -1,15 +1,18 @@
-"""Detects distinct all-time-high breakout events from weekly bars.
+"""Detects distinct breakout events from weekly bars.
 
 A breakout is not every new high printed during a continuing uptrend -- a stock
-making fresh highs every week for months is one continuous move. A breakout only
-counts as a new, distinct event if price pulled back by at least PULLBACK_PCT
-from the prior peak (and based there) before exceeding that peak again.
+making fresh highs every week for months is one continuous move. A breakout is a
+weekly close above the prior peak *out of a consolidation*, where consolidation
+means either of the course's two base shapes since that peak:
+  - a pullback of at least PULLBACK_PCT (some weekly low >= that far below the peak), or
+  - a Darvas-style box: at least BOX_WEEKS completed weeks without a new weekly high.
 """
 import datetime as dt
 from collections import deque
 from dataclasses import dataclass
 
 PULLBACK_PCT = 15.0  # default, configurable later
+BOX_WEEKS = 4  # course: Darvas box of at least 4 weeks counts as a base
 
 
 @dataclass
@@ -24,7 +27,7 @@ def detect_breakouts(
     basis: str = "ATH",
     pullback_pct: float = PULLBACK_PCT,
 ) -> list[BreakoutEvent]:
-    """Return weekly-close breakouts after a qualifying low-price pullback."""
+    """Return weekly-close breakouts out of a qualifying base (pullback or box)."""
     if len(weekly_bars) < 2:
         return []
     events: list[BreakoutEvent] = []
@@ -63,6 +66,8 @@ def detect_breakouts(
         if not lows or close <= level:
             continue
         trough = weekly_bars[lows[0]][2]
-        if (level - trough) / level * 100 >= pullback_pct:
+        base_weeks = i - peak_index - 1  # completed weeks since the peak, excl. this one
+        pulled_back = (level - trough) / level * 100 >= pullback_pct
+        if pulled_back or base_weeks >= BOX_WEEKS:
             events.append(BreakoutEvent(week_start, level, weekly_bars[peak_index][0]))
     return events
