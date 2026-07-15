@@ -167,6 +167,27 @@ per basis.
 6. **Presets** — "Course defaults" += `status: ["active"]`; "Fresh breakout" += active + age ≤4w;
    new "Pyramid watch" preset = `status: ["basing"]`.
 
+7. **Tooltips — every new or moved element must have one** (the app's convention: `FIELD_INFO`
+   entries in `definitions.ts` feeding `title` attributes; column headers and filter buttons
+   already do this — the new elements follow suit, written in course language):
+
+   | Element | Tooltip content |
+   |---|---|
+   | Status column header | "Where the latest breakout is in its life. Active = buyable per the course. Extended = >20% above the level, let it go. Basing = a 4+ week Darvas box is forming (pyramid watch). Ended = closed below the 10-week EMA or 20% hard stop since the breakout." |
+   | Active chip (row) | "Buyable: broke out N weeks ago, +X% above the level, no exit trigger yet." (from `status_reason` + metrics) |
+   | Active ▲ marker | "Pyramid setup: this week broke a 4+ week box. Course rule: add to your position if you hold it." (reuses the current pyramid-flag text) |
+   | Extended chip (row) | "+X% above the breakout level — course rule: let it go, don't chase. Becomes Active again if it pulls back to within 20% without hitting a stop." |
+   | Basing chip (row) | "No new high for N weeks; box 〈floor〉–〈high〉 holding. A weekly close above 〈high〉 is the pyramid/add-on trigger; a close below 〈floor〉 dissolves the box." |
+   | Ended chip (row) | Reason-specific from `status_reason`: "Closed below the 10-week EMA in the week of 〈date〉 — the course's exit." / "Hit the 20% hard stoploss (week of 〈date〉)." |
+   | Status filter chips | "Show only stocks whose latest breakout is 〈state〉. Counts reflect your other active filters." |
+   | Stop dist % header | "Distance from the course stoploss (10-week EMA). Negative and red = a weekly close here would be an exit. The course trails winners (+100%) with the 13-week EMA instead — see the 13W EMA column." |
+   | 13W EMA column (optional, hidden by default) | "Course rule: once a stock is up 100% from your buy, trail the stoploss with the 13-week EMA instead of the 10-week." |
+   | Circuit-trap icon (relocated) | unchanged existing text ("Circuit-stock trap: consecutive ~5% up-weeks on negligible volume — avoid.") |
+   | Pyramid watch preset | "Stocks basing in a 4+ week box under their breakout high — candidates for the course's add-on rule when the box breaks." |
+
+   Acceptance check: every element added or moved by this spec answers "what is this and what
+   does the course say I should do about it?" on hover. No new element ships bare.
+
 Type additions in `types.ts` mirror §7; `ScreenerCriteria` gains `statuses?: BreakoutStatus[]`
 (client-side screening owns filtering; the compat endpoint also implements it for parity since
 it is five lines).
