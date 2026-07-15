@@ -41,7 +41,15 @@ export interface Stock {
   circuit_trap_weeks: number | null;
   exit_signal: boolean | null;
   pyramid_signal: boolean | null;
+  ema_13w: number | null;
+  status: BreakoutStatus | null;
+  status_reason: string | null;
+  box_high: number | null;
+  box_floor: number | null;
 }
+
+// Lifecycle of the latest breakout (docs/SPEC-breakout-lifecycle.md).
+export type BreakoutStatus = "active" | "extended" | "basing" | "ended";
 
 // Basis-dependent metric block from the bundle endpoint (one per basis).
 export interface BasisMetrics {
@@ -56,6 +64,10 @@ export interface BasisMetrics {
   volume_dry_up: boolean | null;
   has_resistance: boolean | null;
   pyramid_signal: boolean | null;
+  status: BreakoutStatus | null;
+  status_reason: string | null;
+  box_high: number | null;
+  box_floor: number | null;
 }
 
 // A stock as served by /stocks/bundle: common fields plus both bases' metrics.
@@ -64,6 +76,7 @@ export type BundleStock = Omit<
   | "breakout_count" | "breakout_week" | "breakout_level" | "consolidation_weeks"
   | "consolidation_range_pct" | "extension_pct" | "breakout_age_weeks"
   | "breakout_volume_ratio" | "volume_dry_up" | "has_resistance" | "pyramid_signal"
+  | "status" | "status_reason" | "box_high" | "box_floor"
 > & { ath: BasisMetrics; w52: BasisMetrics };
 
 export interface Bundle {
@@ -116,4 +129,5 @@ export interface ScreenerCriteria {
   resistance?: "yes" | "no";
   min_stock_age_days?: number;
   max_stock_age_days?: number;
+  statuses?: BreakoutStatus[];  // client-side lifecycle filter
 }

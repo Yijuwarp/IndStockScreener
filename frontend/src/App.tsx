@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { BundleStock, RefreshStatus, ScreenerCriteria, Stock, MarketIndex } from "./types";
+import type { BreakoutStatus, BundleStock, RefreshStatus, ScreenerCriteria, Stock, MarketIndex } from "./types";
 import { fetchBundle } from "./api";
 import { loadCachedBundle, saveCachedBundle } from "./cache";
 import { screenLocal } from "./screen";
@@ -78,6 +78,7 @@ const DEFAULT_CRITERIA: ScreenerCriteria = {
   min_breakout_volume_ratio: 1.5,
   min_stock_age_days: 70,
   max_stock_age_days: 5475,
+  statuses: ["active"],  // course: only un-extended, un-ended breakouts are buyable
 };
 
 const fmtPrice = (v: number | null | undefined) =>
@@ -114,18 +115,41 @@ type Column = {
   colorClass?: (s: Stock) => string;
 };
 
-// Monday of the current calendar week, as an ISO date string (matches the
-// backend's IST-calendar week convention closely enough for display flags).
-function currentWeekStartISO(): string {
-  const now = new Date();
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-  return monday.toISOString().slice(0, 10);
-}
-const WEEK_START_ISO = currentWeekStartISO();
+// Breakout lifecycle (docs/SPEC-breakout-lifecycle.md §8).
+const STATUS_LABELS: Record<BreakoutStatus, string> = {
+  active: "Active",
+  extended: "Extended",
+  basing: "Basing",
+  ended: "Ended",
+};
+const STATUS_ORDER: BreakoutStatus[] = ["active", "basing", "extended", "ended"];
+const STATUS_SORT_RANK: Record<BreakoutStatus, number> = { active: 4, basing: 3, extended: 2, ended: 1 };
 
-const isNewAthThisWeek = (s: Stock) =>
-  s.all_time_high_date != null && s.all_time_high_date >= WEEK_START_ISO;
+const isPyramidBreak = (s: Stock) =>
+  s.status === "active" && s.breakout_age_weeks === 0 && (s.consolidation_weeks ?? 0) >= 4;
+
+function statusTooltip(s: Stock): string {
+  switch (s.status) {
+    case "active": {
+      const base = `Buyable: broke out ${s.breakout_age_weeks ?? "?"}w ago, ${fmtPct(s.extension_pct) || "?"} above the level, no exit trigger yet.`;
+      return isPyramidBreak(s)
+        ? base + " Pyramid setup: this week broke a 4+ week box — course rule: add to your position if you hold it."
+        : base;
+    }
+    case "extended":
+      return `${fmtPct(s.extension_pct) || ">20%"} above the breakout level — course rule: let it go, don't chase. Becomes Active again if it pulls back to within 20% without hitting a stop.`;
+    case "basing":
+      return `No new high for a while; box ${fmtPrice(s.box_floor)}–${fmtPrice(s.box_high)} holding. A weekly close above ${fmtPrice(s.box_high)} is the pyramid/add-on trigger; a close below ${fmtPrice(s.box_floor)} dissolves the box.`;
+    case "ended": {
+      const [kind, date] = (s.status_reason ?? "").split(":");
+      if (kind === "close_below_10w_ema") return `Closed below the 10-week EMA in the week of ${date} — the course's exit.`;
+      if (kind === "hard_stop") return `Hit the 20% hard stoploss (week of ${date}).`;
+      return "Breakout ended.";
+    }
+    default:
+      return "No breakout event for this stock under the selected basis.";
+  }
+}
 
 type ScoreCriterion = { label: string; met: boolean | null };
 
@@ -187,6 +211,23 @@ const COLUMNS: Column[] = [
     render: (s) => (
       <span className="symbol-cell">
         {s.symbol}
+        {s.circuit_trap && (
+          <span
+            className="flag-badge flag-trap"
+            title={`Circuit-stock trap: ${s.circuit_trap_weeks ?? "several"} straight weeks of ~5% gains on negligible volume. Course rule: do not buy.`}
+          >
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <path
+                d="M8 2.2L14.6 13.2H1.4L8 2.2Z M8 6.4V9.6 M8 11.4V11.9"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        )}
         <a
           className="chart-link"
           href={`https://in.tradingview.com/chart/966eATtq/?symbol=NSE%3A${encodeURIComponent(s.symbol)}`}
@@ -210,85 +251,6 @@ const COLUMNS: Column[] = [
       </span>
     ),
     value: (s) => s.symbol,
-  },
-  {
-    key: "flags",
-    label: "Flags",
-    numeric: false,
-    render: (s) => (
-      <span className="flags-cell">
-        {isNewAthThisWeek(s) && (
-          <span
-            className="flag-badge flag-ath"
-            title={`New all-time high this week (${s.all_time_high_date}). The course's primary buy signal.`}
-          >
-            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-              <path
-                d="M2 12.5L6 8.5L9 10.5L14 4.5 M14 4.5H10.5 M14 4.5V8"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-        )}
-        {s.circuit_trap && (
-          <span
-            className="flag-badge flag-trap"
-            title={`Circuit-stock trap: ${s.circuit_trap_weeks ?? "several"} straight weeks of ~5% gains on negligible volume. Course rule: do not buy.`}
-          >
-            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-              <path
-                d="M8 2.2L14.6 13.2H1.4L8 2.2Z M8 6.4V9.6 M8 11.4V11.9"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-        )}
-        {s.exit_signal && (
-          <span
-            className="flag-badge flag-exit"
-            title="Exit signal: weekly close is below the 10-week EMA (course stoploss line)."
-          >
-            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-              <path
-                d="M6.5 3H3V13H6.5 M10 5.5L12.5 8L10 10.5 M12.5 8H6"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-        )}
-        {s.pyramid_signal && (
-          <span
-            className="flag-badge flag-pyramid"
-            title="Pyramid setup: a 4+ week consolidation box broke out this week. Course rule: add to your position if you hold it."
-          >
-            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-              <path
-                d="M8 2.5L14 13.5H2L8 2.5Z M4.7 8.6H11.3"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-        )}
-      </span>
-    ),
-    value: (s) =>
-      (isNewAthThisWeek(s) ? 1 : 0) + (s.circuit_trap ? 1 : 0) + (s.exit_signal ? 1 : 0) + (s.pyramid_signal ? 1 : 0),
   },
   { key: "exchange", label: "Exchange", numeric: false, render: (s) => s.exchange, value: (s) => s.exchange },
   { key: "name", label: "Name", numeric: false, render: (s) => s.name, value: (s) => s.name },
@@ -375,6 +337,33 @@ const COLUMNS: Column[] = [
       return sc >= 6 ? "positive" : sc >= 4 ? "warning" : "";
     },
   },
+  {
+    key: "status",
+    label: "Status",
+    numeric: false,
+    render: (s) =>
+      s.status ? (
+        <span className={`status-chip status-${s.status}`} title={statusTooltip(s)}>
+          {STATUS_LABELS[s.status]}
+          {isPyramidBreak(s) ? " ▲" : ""}
+        </span>
+      ) : (
+        ""
+      ),
+    value: (s) => (s.status ? STATUS_SORT_RANK[s.status] : null),
+  },
+  {
+    key: "stop_dist",
+    label: "Stop Dist %",
+    numeric: true,
+    render: (s) =>
+      s.current_price != null && s.ema_10w ? fmtPct(((s.current_price - s.ema_10w) / s.ema_10w) * 100) : "",
+    value: (s) =>
+      s.current_price != null && s.ema_10w ? ((s.current_price - s.ema_10w) / s.ema_10w) * 100 : null,
+    colorClass: (s) =>
+      s.current_price != null && s.ema_10w ? (s.current_price >= s.ema_10w ? "positive" : "negative") : "",
+  },
+  { key: "ema_13w", label: "13W EMA", numeric: true, render: (s) => fmtPrice(s.ema_13w), value: (s) => s.ema_13w },
   { key: "stock_age", label: "Stock Age", numeric: true, render: (s) => fmtAge(s.stock_age_days), value: (s) => s.stock_age_days },
   { key: "cap_category", label: "Cap", numeric: false, render: (s) => s.cap_category, value: (s) => s.cap_category },
   { key: "weeks_of_history", label: "Weeks of Data", numeric: true, render: (s) => fmtInt(s.weeks_of_history), value: (s) => s.weeks_of_history },
@@ -388,8 +377,8 @@ const COLUMNS: Column[] = [
 const PINNED_COLUMN_KEY = "symbol";
 
 const DEFAULT_VISIBLE = [
-  "flags", "score", "name", "current_price", "market_cap", "weekly_pct_change",
-  "breakout_age_weeks", "extension_pct", "breakout_volume_ratio", "ema_trend",
+  "status", "score", "name", "current_price", "market_cap", "weekly_pct_change",
+  "breakout_age_weeks", "extension_pct", "breakout_volume_ratio", "ema_trend", "stop_dist",
 ];
 
 const DEFAULT_COLUMN_ORDER = [
@@ -400,7 +389,7 @@ const DEFAULT_COLUMN_ORDER = [
 ];
 
 const COLUMN_ORDER_COOKIE = "iss_column_order";
-const COLUMN_VISIBLE_COOKIE = "iss_column_visible_v2";
+const COLUMN_VISIBLE_COOKIE = "iss_column_visible_v3";  // v3: flags -> status/stop_dist
 const WATCHLIST_COOKIE = "iss_watchlist";
 
 function sortRows(rows: Stock[], sort: { key: string; dir: 1 | -1 }): Stock[] {
@@ -450,7 +439,7 @@ const TOUR_STEPS: { title: string; body: string }[] = [
   },
   {
     title: "Read the results",
-    body: "Score (0–8) rates setup quality — hover a score to see exactly which criteria pass and fail, and sort by it. Trend dots show price vs 21/50/200-day averages (3 green = full uptrend). Flags: blue arrow = new all-time high this week (the buy signal), red triangle = circuit-stock trap (avoid), amber door = below the 10-week stoploss line, green pyramid = add-on breakout. Hover any column header or flag for an explanation.",
+    body: "Status shows where each breakout is in its life: Active = buyable, Extended = ran >20% past the level (let it go), Basing = a 4+ week box is forming (pyramid watch — ▲ marks a fresh box break), Ended = hit the course's exit. Score (0–8) rates setup quality — hover it for the criteria. Stop Dist % is your distance to the 10-week EMA stoploss. A red triangle next to a symbol = circuit-stock trap (avoid). Hover any header or chip for an explanation.",
   },
   {
     title: "Build your watchlist",
@@ -462,10 +451,17 @@ const TOUR_STEPS: { title: string; body: string }[] = [
   },
 ];
 
-const PRESETS: { label: string; criteria: ScreenerCriteria }[] = [
+const PRESETS: { label: string; criteria: ScreenerCriteria; tooltip?: string }[] = [
   { label: "Course defaults", criteria: DEFAULT_CRITERIA },
   { label: "Fresh breakout", criteria: { ...DEFAULT_CRITERIA, max_breakout_age_weeks: 4, min_breakout_volume_ratio: 2.0 } },
   { label: "Tight base", criteria: { ...DEFAULT_CRITERIA, min_consolidation_weeks: 6, max_consolidation_range_pct: 15 } },
+  {
+    label: "Pyramid watch",
+    // Basing stocks are below their post-breakout high by definition, so the
+    // new-ATH-this-week gate must come off.
+    criteria: { ...DEFAULT_CRITERIA, statuses: ["basing"], new_all_time_high_this_week: undefined },
+    tooltip: "Stocks basing in a 4+ week box under their breakout high — candidates for the course's add-on rule when the box breaks.",
+  },
 ];
 
 type BootPhase = "booting" | "fetching" | "ready" | "done";
@@ -709,6 +705,16 @@ function App() {
   );
 
   const isAth = criteria.basis !== "52W";
+
+  // Per-status counts under the OTHER active filters (spec §8.2), so a chip's
+  // number always matches what clicking it will show.
+  const statusCounts = useMemo(() => {
+    if (!universe) return null;
+    const rows = screenLocal(universe, { ...criteria, statuses: undefined });
+    const counts: Record<BreakoutStatus, number> = { active: 0, extended: 0, basing: 0, ended: 0 };
+    for (const r of rows) if (r.status) counts[r.status]++;
+    return counts;
+  }, [universe, criteria]);
 
   // Course market-regime rule: stop buying while NIFTY closes below its 40-week EMA
   // (~200 trading days, so the daily 200D EMA stands in for it).
@@ -959,7 +965,7 @@ function App() {
   const renderRow = (s: Stock) => {
     const watched = watchlist.includes(s.symbol);
     return (
-      <tr key={s.id}>
+      <tr key={s.id} className={s.status === "ended" ? "row-ended" : ""}>
         <td className="pinned-column col-text symbol">
           <span className="symbol-cell">
             <button
@@ -1132,6 +1138,27 @@ function App() {
             </button>
           );
         })()}
+        <span className="status-filter-group" title={FIELD_INFO.status_filter}>
+          {STATUS_ORDER.map((st) => {
+            const selected = (criteria.statuses ?? []).includes(st);
+            return (
+              <button
+                key={st}
+                type="button"
+                className={`status-filter-chip status-${st}` + (selected ? " active" : "")}
+                aria-pressed={selected}
+                title={`Show only stocks whose latest breakout is ${STATUS_LABELS[st]}. Counts reflect your other active filters.`}
+                onClick={() => {
+                  const current = criteria.statuses ?? [];
+                  const next = selected ? current.filter((x) => x !== st) : [...current, st];
+                  applyFilter({ statuses: next.length ? next : undefined });
+                }}
+              >
+                {STATUS_LABELS[st]}{statusCounts ? ` · ${statusCounts[st]}` : ""}
+              </button>
+            );
+          })}
+        </span>
         <button
           type="button"
           className="advanced-filter-toggle"
@@ -1155,6 +1182,7 @@ function App() {
             key={p.label}
             type="button"
             className="range-filter-button"
+            title={p.tooltip}
             onClick={() => applyPreset(p.criteria)}
           >
             {p.label}

@@ -60,6 +60,8 @@ export function screenLocal(universe: BundleStock[], c: ScreenerCriteria): Stock
     if (c.min_stock_age_days != null && !(s.stock_age_days != null && s.stock_age_days >= c.min_stock_age_days)) continue;
     if (c.max_stock_age_days != null && !(s.stock_age_days != null && s.stock_age_days <= c.max_stock_age_days)) continue;
 
+    if (c.statuses && c.statuses.length > 0 && !(s.status != null && c.statuses.includes(s.status))) continue;
+
     if (c.min_consolidation_weeks != null && !(s.consolidation_weeks != null && s.consolidation_weeks >= c.min_consolidation_weeks)) continue;
     if (c.max_consolidation_range_pct != null && !(s.consolidation_range_pct != null && s.consolidation_range_pct <= c.max_consolidation_range_pct)) continue;
     if (c.max_extension_pct != null && !(s.extension_pct != null && s.extension_pct <= c.max_extension_pct)) continue;

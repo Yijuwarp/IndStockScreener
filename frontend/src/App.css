@@ -968,3 +968,43 @@ td.warning {
   background: var(--accent);
   transition: width 0.3s ease;
 }
+
+/* ---------- Breakout status ---------- */
+
+.status-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 9px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.status-chip.status-active { background: rgba(38, 166, 154, 0.15); color: var(--green); }
+.status-chip.status-extended { background: rgba(255, 167, 38, 0.15); color: #ffa726; }
+.status-chip.status-basing { background: rgba(41, 98, 255, 0.15); color: #6c9fff; }
+.status-chip.status-ended { background: rgba(239, 83, 80, 0.15); color: var(--red); }
+
+tr.row-ended td { opacity: 0.55; }
+
+.status-filter-group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.status-filter-chip {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--text-dim);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.status-filter-chip:hover { border-color: var(--accent); color: var(--text-bright); }
+.status-filter-chip.active.status-active { background: rgba(38, 166, 154, 0.18); color: var(--green); border-color: var(--green); }
+.status-filter-chip.active.status-extended { background: rgba(255, 167, 38, 0.18); color: #ffa726; border-color: #ffa726; }
+.status-filter-chip.active.status-basing { background: rgba(41, 98, 255, 0.18); color: #6c9fff; border-color: #6c9fff; }
+.status-filter-chip.active.status-ended { background: rgba(239, 83, 80, 0.18); color: var(--red); border-color: var(--red); }
