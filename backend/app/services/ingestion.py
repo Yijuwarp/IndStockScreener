@@ -336,6 +336,8 @@ def fetch_history_batch(
 ) -> dict[str, pd.DataFrame]:
     """Batch-fetch history for many tickers via yf.download(), chunked to stay
     within Yahoo's per-request limits. Returns only tickers with non-empty history."""
+    # Filter out temporary Rights Entitlement symbols (-RE.NS) which have no max historical data
+    tickers = [t for t in tickers if not (t.endswith("-RE.NS") or "-RE.NS" in t)]
     results: dict[str, pd.DataFrame] = {}
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i + chunk_size]

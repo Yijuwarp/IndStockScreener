@@ -31,6 +31,10 @@ def seed_nse(db: Session) -> int:
         name = row["NAME OF COMPANY"].strip()
         isin = row.get("ISIN NUMBER", "").strip()
 
+        # Filter out Rights Entitlements (-RE) which are temporary trading instruments with no 'max' history
+        if symbol.endswith("-RE") or "-RE" in symbol or "Rights Entitlement" in name:
+            continue
+
         existing = db.query(Stock).filter(Stock.symbol == symbol, Stock.exchange == "NSE").first()
         if existing:
             continue
