@@ -15,6 +15,10 @@ import sys
 
 import psycopg
 
+from sqlalchemy import create_engine
+from app.db.session import Base
+from app.models.stock import Stock, WeeklyPrice, BreakoutMetrics, MarketIndex, IndexPrice
+
 SQLITE_PATH = "test.db"
 
 # (table, columns) in dependency order; truncated in reverse before copying.
@@ -65,10 +69,24 @@ def main() -> None:
         sys.exit("usage: python -m scripts.migrate_to_pg <postgres-url>")
     pg_url = sys.argv[1]
     if pg_url.startswith("postgres://"):
-        pg_url = pg_url.replace("postgres://", "postgresql://", 1)
+        pg_url = pg_url.replace("postgres://", "postgresql+psycopg://", 1)
+    elif pg_url.startswith("postgresql://"):
+        pg_url = pg_url.replace("postgresql://", "postgresql+psycopg://", 1)
+
+    # Ensure tables exist in the target database first
+    engine = create_engine(pg_url)
+    Base.metadata.create_all(bind=engine)
+    engine.dispose()
+
+    # Raw psycopg connection string for fast bulk COPY
+    raw_pg_url = sys.argv[1]
+    if raw_pg_url.startswith("postgresql+psycopg://"):
+        raw_pg_url = raw_pg_url.replace("postgresql+psycopg://", "postgresql://", 1)
+    elif raw_pg_url.startswith("postgres://"):
+        raw_pg_url = raw_pg_url.replace("postgres://", "postgresql://", 1)
 
     src = sqlite3.connect(SQLITE_PATH)
-    with psycopg.connect(pg_url) as dst:
+    with psycopg.connect(raw_pg_url) as dst:
         with dst.cursor() as cur:
             # Weekly-only storage: reclaim the space if the target still has dailies.
             cur.execute("DROP TABLE IF EXISTS daily_prices")
