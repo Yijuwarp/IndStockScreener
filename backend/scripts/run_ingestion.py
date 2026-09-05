@@ -19,10 +19,10 @@ def main():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        if db.query(Stock).count() == 0:
-            print("Database is empty. Seeding stock universe from NSE...")
-            seed_count = seed_nse(db)
-            print(f"Seeded {seed_count} stocks.")
+        print("Syncing stock universe from NSE...")
+        seed_count = seed_nse(db)
+        if seed_count > 0:
+            print(f"Seeded {seed_count} new stocks.")
 
         if "--full" in sys.argv:
             # last_updated=None routes every stock through the full-history path.

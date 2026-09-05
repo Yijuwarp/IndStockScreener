@@ -20,10 +20,30 @@ HEADERS = {
 }
 
 
+RENAMED_SYMBOLS = {
+    "GUJGASLTD": "GUJENERGY",
+}
+
+
 def seed_nse(db: Session) -> int:
     resp = httpx.get(NSE_EQUITY_LIST_URL, headers=HEADERS, timeout=30, follow_redirects=True)
     resp.raise_for_status()
     reader = csv.DictReader(io.StringIO(resp.text))
+
+    # Clean up legacy Rights Entitlement (-RE) stock records
+    db.query(Stock).filter(
+        (Stock.symbol.like("%-RE")) | (Stock.name.like("%Rights Entitlement%"))
+    ).delete(synchronize_session=False)
+
+    # Migrate known renamed tickers
+    for old_sym, new_sym in RENAMED_SYMBOLS.items():
+        old_stock = db.query(Stock).filter(Stock.symbol == old_sym).first()
+        new_stock = db.query(Stock).filter(Stock.symbol == new_sym).first()
+        if old_stock and new_stock:
+            db.delete(old_stock)
+        elif old_stock and not new_stock:
+            old_stock.symbol = new_sym
+            old_stock.yf_ticker = f"{new_sym}.NS"
 
     count = 0
     for row in reader:
@@ -35,8 +55,17 @@ def seed_nse(db: Session) -> int:
         if symbol.endswith("-RE") or "-RE" in symbol or "Rights Entitlement" in name:
             continue
 
-        existing = db.query(Stock).filter(Stock.symbol == symbol, Stock.exchange == "NSE").first()
+        existing = None
+        if isin:
+            existing = db.query(Stock).filter(Stock.isin == isin, Stock.exchange == "NSE").first()
+        if not existing:
+            existing = db.query(Stock).filter(Stock.symbol == symbol, Stock.exchange == "NSE").first()
+
         if existing:
+            if existing.symbol != symbol:
+                existing.symbol = symbol
+                existing.yf_ticker = f"{symbol}.NS"
+                existing.name = name
             continue
 
         db.add(
