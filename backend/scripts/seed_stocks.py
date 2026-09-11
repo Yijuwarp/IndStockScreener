@@ -44,6 +44,7 @@ def seed_nse(db: Session) -> int:
         elif old_stock and not new_stock:
             old_stock.symbol = new_sym
             old_stock.yf_ticker = f"{new_sym}.NS"
+    db.flush()
 
     count = 0
     for row in reader:
@@ -55,16 +56,17 @@ def seed_nse(db: Session) -> int:
         if symbol.endswith("-RE") or "-RE" in symbol or "Rights Entitlement" in name:
             continue
 
-        existing = None
-        if isin:
+        existing = db.query(Stock).filter(Stock.symbol == symbol, Stock.exchange == "NSE").first()
+        if not existing and isin:
             existing = db.query(Stock).filter(Stock.isin == isin, Stock.exchange == "NSE").first()
-        if not existing:
-            existing = db.query(Stock).filter(Stock.symbol == symbol, Stock.exchange == "NSE").first()
 
         if existing:
             if existing.symbol != symbol:
                 existing.symbol = symbol
                 existing.yf_ticker = f"{symbol}.NS"
+            if isin and existing.isin != isin:
+                existing.isin = isin
+            if name and existing.name != name:
                 existing.name = name
             continue
 
