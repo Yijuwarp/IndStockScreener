@@ -61,11 +61,10 @@ def build_bundle(db: Session) -> dict:
         row["w52"] = _basis_block(s, metrics.get((s.id, "52W")), "52W")
         rows.append(row)
 
-    # Live from the DB (oldest successfully-updated stock), not the process's
-    # startup snapshot -- a long-lived process would otherwise serve a stale date
-    # after the external refresh job writes new data.
+    # Use max (latest) updated date so an isolated delisted or stale stock does not
+    # pin data_as_of to an old date forever and block frontend cache revalidation.
     data_as_of = (
-        db.query(sa_func.min(Stock.last_updated)).filter(Stock.last_updated.isnot(None)).scalar()
+        db.query(sa_func.max(Stock.last_updated)).filter(Stock.last_updated.isnot(None)).scalar()
     )
 
     return {

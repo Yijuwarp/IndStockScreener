@@ -31,11 +31,11 @@ def most_recent_weekday(today: dt.date) -> dt.date:
     return d
 
 
-def _oldest_last_updated(db) -> dt.date | None:
+def _latest_last_updated(db) -> dt.date | None:
     row = (
         db.query(Stock.last_updated)
         .filter(Stock.last_updated.isnot(None))
-        .order_by(Stock.last_updated.asc())
+        .order_by(Stock.last_updated.desc())
         .first()
     )
     return row[0] if row else None
@@ -55,7 +55,7 @@ def _run_refresh():
     db = SessionLocal()
     try:
         with status.lock:
-            status.data_as_of = _oldest_last_updated(db)
+            status.data_as_of = _latest_last_updated(db)
             status.refreshing = False
     finally:
         db.close()
@@ -74,13 +74,13 @@ def check_and_refresh() -> None:
                 seed_nse(db)
             except Exception:
                 pass  # no network / NSE archive down -- retry next startup
-        oldest = _oldest_last_updated(db)
+        latest = _latest_last_updated(db)
         never_updated_count = db.query(Stock).filter(Stock.last_updated.is_(None)).count()
     finally:
         db.close()
 
     with status.lock:
-        status.data_as_of = oldest
+        status.data_as_of = latest
 
     # Hosted deploys set DISABLE_SELF_REFRESH: the GitHub Actions workflow owns
     # ingestion there (Yahoo rate-limits datacenter IPs, so refreshing from the
